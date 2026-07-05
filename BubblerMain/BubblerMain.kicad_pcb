@@ -13547,7 +13547,7 @@
 			(net 19 "unconnected-(J8-SHIELD-PadS1)_1")
 			(pinfunction "SHIELD")
 			(pintype "passive+no_connect")
-			(uuid "36a41ba0-d2a5-45fa-8a36-80379837bf57")
+			(uuid "8157da3d-bcd6-4b46-905e-178b4bf3fdd4")
 		)
 		(pad "S1" thru_hole oval
 			(at 4.32 -3.105 180)
@@ -13559,7 +13559,7 @@
 			(net 20 "unconnected-(J8-SHIELD-PadS1)_2")
 			(pinfunction "SHIELD")
 			(pintype "passive+no_connect")
-			(uuid "36a41ba0-d2a5-45fa-8a36-80379837bf57")
+			(uuid "27031adc-bf13-44be-a2e4-38c4c353348c")
 		)
 		(pad "S1" thru_hole oval
 			(at 4.32 1.075 180)
@@ -13571,7 +13571,7 @@
 			(net 21 "unconnected-(J8-SHIELD-PadS1)_3")
 			(pinfunction "SHIELD")
 			(pintype "passive+no_connect")
-			(uuid "36a41ba0-d2a5-45fa-8a36-80379837bf57")
+			(uuid "352cf5f7-0e4e-47d7-8bdc-9cb36563c6b6")
 		)
 		(embedded_fonts no)
 		(model "${KICAD9_3DMODEL_DIR}/Connector_USB.3dshapes/USB_C_Receptacle_HCTL_HC-TYPE-C-16P-01A.step"
@@ -30810,7 +30810,7 @@
 		)
 		(polygon
 			(pts
-				(xy 86 63) (xy 82 63) (xy 82 66.5) (xy 85.5 66.5) (xy 85.5 66.5) (xy 86 66.5)
+				(xy 86 63) (xy 82 63) (xy 82 66.5) (xy 85.5 66.5) (xy 86 66.5)
 			)
 		)
 		(filled_polygon
