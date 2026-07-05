@@ -1,0 +1,9 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "TPS54824")(type "KiCad")(uri "${KIPRJMOD}/TPS54824RNVR.kicad_sym")(options "")(descr ""))
+  (lib (name "TPS563201")(type "KiCad")(uri "${KIPRJMOD}/TPS563201DDCR.kicad_sym")(options "")(descr ""))
+  (lib (name "7M712")(type "KiCad")(uri "${KIPRJMOD}/SM712.kicad_sym")(options "")(descr ""))
+  (lib (name "SPM6530T")(type "KiCad")(uri "${KIPRJMOD}/SPM6530T-3R3M.kicad_sym")(options "")(descr ""))
+  (lib (name "TPS565201")(type "KiCad")(uri "${KIPRJMOD}/TPS565201DDCR.kicad_sym")(options "")(descr ""))
+  (lib (name "USBC")(type "KiCad")(uri "${KIPRJMOD}/UJC-H-G-SMT-P6-TR.kicad_sym")(options "")(descr ""))
+)
