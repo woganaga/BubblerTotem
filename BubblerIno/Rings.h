@@ -25,5 +25,8 @@ void setRing(uint8_t ringNum, CRGB color);
 void setAll(CRGB color);
 void showAll();
 
+// uniformly scales every LED currently in the buffer; scale is 0-255 (255 = unchanged)
+void scaleArrayBrightness(uint8_t scale);
+
 // normalized vertical height of a ring position: 0 = top (12:00), 1 = bottom
 float ringPosHeight(uint8_t pos);

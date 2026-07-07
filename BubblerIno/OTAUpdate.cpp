@@ -3,6 +3,7 @@
 #include <ArduinoOTA.h>
 
 void otaInit() {
+  ArduinoOTA.setPassword("mila");
   ArduinoOTA.setHostname(WIFI_HOSTNAME);
   ArduinoOTA.begin();
 }

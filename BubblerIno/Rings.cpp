@@ -64,6 +64,13 @@ void setAll(CRGB color) {
   }
 }
 
+void scaleArrayBrightness(uint8_t scale) {
+  for (uint16_t i = 0; i < LEDS_PER_PIN; i++) {
+    ledsA[i].nscale8(scale);
+    ledsB[i].nscale8(scale);
+  }
+}
+
 void showAll() {
   uint32_t total = 0;
   for (uint16_t i = 0; i < LEDS_PER_PIN; i++) {

@@ -2,6 +2,7 @@
 #include <WebServer.h>
 #include <Update.h>
 #include "EffectManager.h"
+#include "AudioInput.h"
 
 static WebServer server(80);
 
@@ -20,26 +21,45 @@ static const DirOption HORIZONTAL_DIRS[] = {
   { "Right", DIR_FORWARD },
   { "Bounce", DIR_BOUNCE },
 };
+static const DirOption CHASE_DIRS[] = {
+  { "Forward", DIR_FORWARD },
+  { "Reverse", DIR_REVERSE },
+  { "Bounce", DIR_BOUNCE },
+};
 static const DirOption SPIRAL_DIRS[] = {
   { "Left", DIR_REVERSE },
   { "Right", DIR_FORWARD },
   { "Bounce In", DIR_BOUNCE_IN },
   { "Bounce Out", DIR_BOUNCE_OUT },
 };
+static const DirOption PINWHEEL_DIRS[] = {
+  { "Clockwise", DIR_FORWARD },
+  { "Counterclockwise", DIR_REVERSE },
+};
 
 struct EffectUIInfo {
   bool usesWidth;
+  bool usesTwists;
+  bool usesRows;
+  bool usesOverlap;
+  bool usesDualChase;
   const DirOption* dirOptions;
   uint8_t dirCount;
 };
 
 static const EffectUIInfo EFFECT_UI[EFFECT_COUNT] = {
-  { false, nullptr, 0 },                  // Off
-  { true, VERTICAL_DIRS, 3 },              // Vertical Sweep
-  { true, HORIZONTAL_DIRS, 3 },            // Horizontal Sweep
-  { false, nullptr, 0 },                  // Alternate Flash
-  { true, SPIRAL_DIRS, 4 },                // Spiral
-  { false, nullptr, 0 },                  // Snow
+  { false, false, false, false, false, nullptr, 0 },              // Off
+  { true, false, false, false, false, VERTICAL_DIRS, 3 },          // Vertical Sweep
+  { true, false, false, false, false, HORIZONTAL_DIRS, 3 },        // Horizontal Sweep
+  { false, false, false, true, false, nullptr, 0 },                // Alternate Flash
+  { true, false, false, false, true, CHASE_DIRS, 3 },              // Chase
+  { true, true, true, false, false, SPIRAL_DIRS, 4 },              // Spiral
+  { false, false, false, false, false, nullptr, 0 },              // Snow
+  { false, false, false, false, false, PINWHEEL_DIRS, 2 },        // Pinwheel
+  { false, false, false, false, false, nullptr, 0 },              // Colorwash
+  { false, false, false, false, false, nullptr, 0 },              // Fire
+  { false, false, false, false, false, nullptr, 0 },              // Confetti
+  { true, false, false, false, false, nullptr, 0 },                // Ripple
 };
 
 static String colorToHex(CRGB c) {
@@ -62,7 +82,11 @@ static const char* PAGE_STYLE =
   "form label{display:block;margin:0.75em 0}"
   "input[type=color]{width:2em;height:2em;border:none;margin-right:0.25em}"
   "input[type=submit]{margin-top:1em;padding:0.5em 1.5em}"
-  "a.link{color:#8cf}";
+  "a.link{color:#8cf}"
+  "#vu{width:280px;height:20px;background:#333;border-radius:4px;margin:1em auto;overflow:hidden}"
+  "#vuBar{height:100%;width:0%;background:#4caf50}"
+  "#beatDot{width:20px;height:20px;border-radius:50%;background:#333;margin:0.5em auto}"
+  "#beatDot.on{background:#ff5252}";
 
 static void appendParamsForm(String& html) {
   EffectId active = getActiveEffect();
@@ -88,6 +112,7 @@ static void appendParamsForm(String& html) {
   html += "</label>";
 
   html += "<label>Speed <input type='range' name='speed' min='1' max='100' value='" + String(p.speedPct) + "'></label>";
+  html += "<label>Intensity <input type='range' name='intensity' min='1' max='100' value='" + String(p.intensity) + "'></label>";
 
   if (info.usesWidth) {
     html += "<label>Width <select name='width'>";
@@ -95,6 +120,22 @@ static void appendParamsForm(String& html) {
       html += "<option value='" + String(w) + "'" + (w == p.width ? " selected" : "") + ">" + String(w) + "</option>";
     }
     html += "</select></label>";
+  }
+
+  if (info.usesTwists) {
+    html += "<label>Twists <input type='range' name='twists' min='1' max='10' value='" + String(p.twists) + "'></label>";
+  }
+
+  if (info.usesRows) {
+    html += "<label>Rows <input type='range' name='rows' min='1' max='6' value='" + String(p.rows) + "'></label>";
+  }
+
+  if (info.usesOverlap) {
+    html += "<label>Overlap <input type='range' name='overlap' min='1' max='100' value='" + String(p.overlap) + "'></label>";
+  }
+
+  if (info.usesDualChase) {
+    html += "<label><input type='checkbox' name='dualChase' value='1'" + String(p.dualChase ? " checked" : "") + "> Dual chase (start from both ends)</label>";
   }
 
   if (info.dirOptions != nullptr) {
@@ -108,6 +149,20 @@ static void appendParamsForm(String& html) {
 
   html += "<input type='submit' value='Apply'>";
   html += "</form>";
+}
+
+// drivesLeds marks this page's poll as a heartbeat that also flashes the
+// physical LEDs on the beat (used only by the mic settings page)
+static void appendVuMeter(String& html, bool drivesLeds) {
+  html += "<div id='vu'><div id='vuBar'></div></div>";
+  html += "<div id='beatDot'></div>";
+  html += "<script>setInterval(function(){"
+          "fetch('";
+  html += drivesLeds ? "/audio?mic=1" : "/audio";
+  html += "').then(function(r){return r.json();}).then(function(d){"
+          "document.getElementById('vuBar').style.width=(d.level*100)+'%';"
+          "document.getElementById('beatDot').className=d.beat?'on':'';"
+          "});},150);</script>";
 }
 
 static void handleRoot() {
@@ -125,10 +180,20 @@ static void handleRoot() {
   }
 
   appendParamsForm(html);
+  appendVuMeter(html, false);
 
+  html += "<a class='link' href='/mic'>Mic Settings</a> ";
   html += "<a class='link' href='/update'>Firmware Update</a>";
   html += "</body></html>";
   server.send(200, "text/html", html);
+}
+
+static void handleAudio() {
+  if (server.hasArg("mic")) {
+    audioMarkMicPageActive(millis());
+  }
+  String json = "{\"level\":" + String(audioLevel(), 3) + ",\"beat\":" + (audioBeatActive() ? "true" : "false") + "}";
+  server.send(200, "application/json", json);
 }
 
 static void handleSet() {
@@ -165,6 +230,12 @@ static void handleParams() {
       if (speed > 100) speed = 100;
       p.speedPct = speed;
     }
+    if (server.hasArg("intensity")) {
+      int intensity = server.arg("intensity").toInt();
+      if (intensity < 1) intensity = 1;
+      if (intensity > 100) intensity = 100;
+      p.intensity = intensity;
+    }
     if (server.hasArg("width")) {
       int width = server.arg("width").toInt();
       if (width < 1) width = 1;
@@ -174,9 +245,104 @@ static void handleParams() {
     if (server.hasArg("direction")) {
       p.direction = (Direction)server.arg("direction").toInt();
     }
+    if (server.hasArg("twists")) {
+      int twists = server.arg("twists").toInt();
+      if (twists < 1) twists = 1;
+      if (twists > 10) twists = 10;
+      p.twists = twists;
+    }
+    if (server.hasArg("rows")) {
+      int rows = server.arg("rows").toInt();
+      if (rows < 1) rows = 1;
+      if (rows > 6) rows = 6;
+      p.rows = rows;
+    }
+    if (server.hasArg("overlap")) {
+      int overlap = server.arg("overlap").toInt();
+      if (overlap < 1) overlap = 1;
+      if (overlap > 100) overlap = 100;
+      p.overlap = overlap;
+    }
+    if (EFFECT_UI[active].usesDualChase) {
+      p.dualChase = server.hasArg("dualChase") ? 1 : 0;
+    }
   }
 
   server.sendHeader("Location", "/");
+  server.send(303);
+}
+
+static void handleMicPage() {
+  AudioSettings& s = audioSettings();
+
+  String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<title>Mic Settings</title><style>";
+  html += PAGE_STYLE;
+  html += "</style></head><body><h1>Mic Settings</h1>";
+
+  appendVuMeter(html, true);
+
+  html += "<form method='POST' action='/mic/save'>";
+  html += "<label>Sensitivity <input type='range' name='gain' min='1' max='100' value='" + String(s.gain) + "'></label>";
+  html += "<label>Noise Floor <input type='range' name='noiseFloor' min='0' max='100' value='" + String(s.noiseFloor) + "'></label>";
+  html += "<label>Beat Threshold % <input type='range' name='beatThreshold' min='110' max='400' value='" + String(s.beatThreshold) + "'></label>";
+  html += "<label>Beat Debounce (ms) <input type='range' name='beatDebounce' min='30' max='500' value='" + String(s.beatDebounceMs) + "'></label>";
+  html += "<input type='submit' value='Apply (save to flash)'>";
+  html += "</form>";
+
+  // sliders take effect immediately as they're dragged; Apply only persists
+  // the already-live values to flash so they survive a reboot
+  html += "<script>(function(){"
+          "var form=document.querySelector('form');"
+          "function liveUpdate(){fetch('/mic',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},"
+          "body:new URLSearchParams(new FormData(form)).toString()});}"
+          "form.querySelectorAll(\"input[type='range']\").forEach(function(el){el.addEventListener('input',liveUpdate);});"
+          "})();</script>";
+
+  html += "<a class='link' href='/'>Back</a></body></html>";
+  server.send(200, "text/html", html);
+}
+
+static void applyMicParamsFromRequest() {
+  AudioSettings& s = audioSettings();
+
+  if (server.hasArg("gain")) {
+    int gain = server.arg("gain").toInt();
+    if (gain < 1) gain = 1;
+    if (gain > 100) gain = 100;
+    s.gain = gain;
+  }
+  if (server.hasArg("noiseFloor")) {
+    int noiseFloor = server.arg("noiseFloor").toInt();
+    if (noiseFloor < 0) noiseFloor = 0;
+    if (noiseFloor > 100) noiseFloor = 100;
+    s.noiseFloor = noiseFloor;
+  }
+  if (server.hasArg("beatThreshold")) {
+    int beatThreshold = server.arg("beatThreshold").toInt();
+    if (beatThreshold < 110) beatThreshold = 110;
+    if (beatThreshold > 400) beatThreshold = 400;
+    s.beatThreshold = beatThreshold;
+  }
+  if (server.hasArg("beatDebounce")) {
+    int beatDebounce = server.arg("beatDebounce").toInt();
+    if (beatDebounce < 30) beatDebounce = 30;
+    if (beatDebounce > 500) beatDebounce = 500;
+    s.beatDebounceMs = beatDebounce;
+  }
+}
+
+// called live on every slider drag; applies immediately but doesn't touch flash
+static void handleMicParams() {
+  applyMicParamsFromRequest();
+  server.send(204);
+}
+
+// called by the Apply button; applies the submitted values and persists them
+static void handleMicSave() {
+  applyMicParamsFromRequest();
+  audioSaveSettings();
+  server.sendHeader("Location", "/mic");
   server.send(303);
 }
 
@@ -218,6 +384,10 @@ void webUIInit() {
   server.on("/params", HTTP_POST, handleParams);
   server.on("/update", HTTP_GET, handleUpdatePage);
   server.on("/update", HTTP_POST, handleUpdateResult, handleUpdateUpload);
+  server.on("/audio", HTTP_GET, handleAudio);
+  server.on("/mic", HTTP_GET, handleMicPage);
+  server.on("/mic", HTTP_POST, handleMicParams);
+  server.on("/mic/save", HTTP_POST, handleMicSave);
   server.begin();
 }
 
