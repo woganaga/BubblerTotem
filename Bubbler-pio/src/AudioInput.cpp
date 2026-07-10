@@ -121,10 +121,10 @@ static float bassPeak = 1e-6f, midPeak = 1e-6f, trebPeak = 1e-6f;
 static float bassAvg = 0.0f;
 static uint32_t lastBeatMs = 0;
 
-static float prevMag[FFT_SAMPLES / 2];
-static float onsetHist[ONSET_HIST];
+static float prevMag[FFT_SAMPLES / 2]; // log-compressed magnitudes of the previous frame
+static float onsetHist[ONSET_HIST];    // conditioned onset strength (local-mean removed, rectified)
 static int onsetHead = 0;
-static float fluxPeak = 1e-6f;
+static float fluxMean = 0.0f;          // short local mean of the flux (the slow-varying baseline)
 static uint32_t frameCounter = 0;
 
 // tempo / PLL
@@ -155,43 +155,106 @@ static inline float onsetAt(int k) { // k=0 is the newest sample
   return onsetHist[idx];
 }
 
-// Weighted autocorrelation of the onset envelope -> tempo estimate.
+// scratch for the normalized autocorrelation (file-static rather than on
+// the DSP task's stack)
+static float acf[ONSET_HIST];
+static uint8_t lowConfCount = 0;
+
+// No credible periodicity right now: hold the last tempo briefly (a quiet
+// bar or breakdown shouldn't drop the lock instantly), then stop reporting
+// a tempo at all rather than keep showing a stale/imagined one.
+static void tempoLost() {
+  if (lowConfCount < 255) lowConfCount++;
+  if (lowConfCount >= 16) smoothedBpm = 0.0f; // ~4s at 4 updates/s
+}
+
+// Zero-mean, variance-normalized autocorrelation of the onset envelope ->
+// tempo estimate. The mean removal is load-bearing: the envelope is
+// all-positive, and autocorrelating it with its DC left in gives a
+// near-flat ACF (every lag scores ~mean^2) - that flatness is what capped
+// confidence around 25% no matter how strong the beat was, and let the old
+// narrow 120-BPM prior pick a phantom ~110 BPM out of silence. On the
+// zero-mean signal r is a true correlation in [-1,1]: ~0 for noise and
+// silence, high only for real periodicity - so the peak's r value IS the
+// confidence, and doubles as the silence gate.
 static void computeTempo() {
   int minLag = (int)roundf(FPS * 60.0f / MAX_BPM);
   int maxLag = (int)roundf(FPS * 60.0f / MIN_BPM);
   if (minLag < 2) minLag = 2;
-  if (maxLag > ONSET_HIST - 1) maxLag = ONSET_HIST - 1;
+  if (maxLag > (ONSET_HIST - 1) / 2) maxLag = (ONSET_HIST - 1) / 2; // harmonic scoring reads r at 2*lag
 
-  float best = 0, scoreSum = 0;
-  int bestLag = 0, scoreCnt = 0;
-  for (int lag = minLag; lag <= maxLag; lag++) {
-    float s = 0;
-    for (int i = lag; i < ONSET_HIST; i++) s += onsetAt(i) * onsetAt(i - lag);
-    s /= (ONSET_HIST - lag);
-    // bias toward musical tempi (~120 BPM) to fight half/double-time errors
-    float bpmAtLag = FPS * 60.0f / lag;
-    float lg = log2f(bpmAtLag / 120.0f) / 0.6f;
-    s *= expf(-0.5f * lg * lg);
-    scoreSum += s;
-    scoreCnt++;
-    if (s > best) { best = s; bestLag = lag; }
+  float mu = 0;
+  for (int i = 0; i < ONSET_HIST; i++) mu += onsetHist[i];
+  mu /= ONSET_HIST;
+  float var = 0;
+  for (int i = 0; i < ONSET_HIST; i++) { float d = onsetHist[i] - mu; var += d * d; }
+  var /= ONSET_HIST;
+  if (var < 1e-12f) { // dead-flat envelope (true silence)
+    confidence = 0.0f;
+    tempoLost();
+    return;
   }
-  if (bestLag <= 0) return;
 
-  float bpm = (FPS * 60.0f / bestLag) * tempoScale;
+  int lo = minLag - 1;      // one extra lag each side for the peak interpolation below
+  int hi = maxLag * 2 + 1;  // through 2*lag for harmonic scoring
+  if (lo < 1) lo = 1;
+  if (hi > ONSET_HIST - 1) hi = ONSET_HIST - 1;
+  for (int lag = lo; lag <= hi; lag++) {
+    float s = 0;
+    for (int i = lag; i < ONSET_HIST; i++) s += (onsetAt(i) - mu) * (onsetAt(i - lag) - mu);
+    acf[lag] = s / ((ONSET_HIST - lag) * var);
+  }
+
+  // Pick the beat period: correlation at the lag plus support from its
+  // double - the true tempo also correlates at 2 beats, so it outscores
+  // half-time impostors on evidence. The tempo prior stays, but wide
+  // (sigma = 1 octave, was 0.6): a tie-breaker, not a dictator - the old
+  // narrow prior actively fought legitimate fast tempi like 160 BPM.
+  float best = -1e9f;
+  int bestLag = 0;
+  for (int lag = minLag; lag <= maxLag; lag++) {
+    float score = acf[lag] + 0.5f * acf[lag * 2];
+    float lg = log2f((FPS * 60.0f / lag) / 120.0f);
+    score *= expf(-0.5f * lg * lg);
+    if (score > best) { best = score; bestLag = lag; }
+  }
+  if (bestLag <= 0) {
+    confidence = 0.0f;
+    tempoLost();
+    return;
+  }
+
+  // Parabolic interpolation around the peak for a fractional beat period.
+  // At ~31 envelope frames/sec the integer lags near fast tempi are >10 BPM
+  // apart (160 BPM = lag 11.7 - there is no integer bin for it, its energy
+  // splits across lags 11 and 12), which is why fast beats couldn't be
+  // followed; the quadratic fit recovers the in-between period.
+  float y0 = acf[bestLag - 1], y1 = acf[bestLag], y2 = acf[bestLag + 1];
+  float denom = y0 - 2.0f * y1 + y2;
+  float frac = (fabsf(denom) > 1e-9f) ? 0.5f * (y0 - y2) / denom : 0.0f;
+  if (frac > 0.5f) frac = 0.5f;
+  if (frac < -0.5f) frac = -0.5f;
+  float peakR = y1 - 0.25f * (y0 - y2) * frac; // interpolated peak height
+
+  float bpm = (FPS * 60.0f / ((float)bestLag + frac)) * tempoScale;
   if (bpm < MIN_BPM) bpm *= 2.0f;
   if (bpm > MAX_BPM) bpm *= 0.5f;
-  float avg = scoreCnt ? scoreSum / scoreCnt : 1e-6f;
-  float conf = avg > 1e-9f ? (best / avg - 1.0f) / 3.0f : 0.0f;
-  confidence = conf < 0 ? 0 : (conf > 1 ? 1 : conf);
+
+  confidence = peakR < 0.0f ? 0.0f : (peakR > 1.0f ? 1.0f : peakR);
+
+  if (confidence < 0.15f) { // noise floor for a real correlation peak
+    tempoLost();
+    return; // don't blend a garbage estimate into the tempo
+  }
+  lowConfCount = 0;
 
   if (smoothedBpm < 1e-3f) {
     smoothedBpm = bpm;
   } else {
-    // Once the autocorrelation is confidently locked, blend new estimates in
-    // much more slowly - the tempo should settle and hold steady rather than
-    // wander with every wobble in the onset envelope. While unconfident,
-    // re-acquire quickly.
+    // Once confidently locked, blend new estimates in much more slowly -
+    // the tempo should settle and hold steady rather than wander with
+    // every wobble in the onset envelope. While unconfident, re-acquire
+    // quickly.
     float alpha = confidence > 0.5f ? 0.05f : 0.2f;
     smoothedBpm = smoothedBpm * (1.0f - alpha) + bpm * alpha;
   }
@@ -230,17 +293,25 @@ static void processFrame(uint32_t nowMs) {
   float trebN = trebE > noise ? fminf(trebE / trebPeak, 1.0f) : 0.0f;
   float volume = fminf((bassN + midN + trebN) / 3.0f, 1.0f);
 
-  // spectral flux (sum of positive magnitude changes) -> onset strength envelope
+  // Log-compressed spectral flux (sum of positive changes in log-magnitude)
+  // -> onset strength. Log compression is the standard conditioning: a
+  // doubling of a bin's magnitude contributes the same amount whether the
+  // music is quiet or loud, so the envelope doesn't need an AGC.
   float flux = 0;
   for (int i = 1; i < FLUX_HI_BIN; i++) {
-    float d = vReal[i] - prevMag[i];
+    float m = log1pf(vReal[i] * scale * 10.0f);
+    float d = m - prevMag[i];
     if (d > 0) flux += d;
-    prevMag[i] = vReal[i];
+    prevMag[i] = m;
   }
-  flux *= scale;
-  fluxPeak = fmaxf(fluxPeak * 0.999f, flux);
-  if (fluxPeak < 1e-6f) fluxPeak = 1e-6f;
-  onsetHist[onsetHead] = fminf(flux / fluxPeak, 1.0f);
+  // Subtract a short local mean and half-wave rectify, so the stored
+  // envelope is spiky at onsets and ~zero elsewhere. (Replaces the old
+  // decaying-peak normalizer, which in a silent room stretched mic
+  // self-noise to full scale and handed the tempo tracker a fake signal -
+  // the source of the phantom ~110 BPM readings in silence.)
+  fluxMean = fluxMean * 0.95f + flux * 0.05f; // ~0.6s time constant at 31 fps
+  float onset = flux - fluxMean;
+  onsetHist[onsetHead] = onset > 0.0f ? onset : 0.0f;
   onsetHead = (onsetHead + 1) % ONSET_HIST;
 
   int peakBin = 1;
@@ -249,10 +320,20 @@ static void processFrame(uint32_t nowMs) {
   for (int i = 1; i < half; i++) if (vReal[i] > peakMag) { peakMag = vReal[i]; peakBin = i; }
   float dominantHz = peakBin * BIN_HZ;
 
+  // effective tempo: tap override wins briefly, else the detected tempo
+  float bpm = (nowMs < overrideUntilMs && overrideBpm > 0) ? overrideBpm : smoothedBpm;
+
   // immediate onset flag (bass spike over baseline), also nudges the PLL phase
   if (bassAvg < 1e-9f) bassAvg = bassN;
   float threshold = settings.beatThreshold / 100.0f;
-  bool debounceOk = (nowMs - lastBeatMs) >= settings.beatDebounceMs;
+  // debounce, capped at ~60% of the tracked beat period so a large setting
+  // can't choke fast tempi (at 160 BPM beats are only 375ms apart)
+  uint32_t debounceMs = settings.beatDebounceMs;
+  if (bpm > 1.0f) {
+    uint32_t cap = (uint32_t)(36000.0f / bpm); // 0.6 * 60000 / bpm
+    if (debounceMs > cap) debounceMs = cap;
+  }
+  bool debounceOk = (nowMs - lastBeatMs) >= debounceMs;
   bool isBeat = false;
   if (debounceOk && bassN > noise && bassN > bassAvg * threshold && bassN > 0.15f) {
     isBeat = true;
@@ -264,9 +345,6 @@ static void processFrame(uint32_t nowMs) {
   // update tempo estimate a few times per second (autocorrelation is cheap but not free)
   frameCounter++;
   if ((frameCounter % 8) == 0) computeTempo();
-
-  // effective tempo: tap override wins briefly, else the detected tempo
-  float bpm = (nowMs < overrideUntilMs && overrideBpm > 0) ? overrideBpm : smoothedBpm;
 
   // PLL beat clock: advance phase; a detected onset pulls it toward the beat
   if (bpm > 1.0f) {
