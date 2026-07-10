@@ -59,7 +59,17 @@ static const char* TX_CHAR_UUID = "7a5a1002-0002-4b70-8f1a-9d6e9c9a2b10"; // not
 // below, so it adapts to whatever the phone/bridge actually supports
 // instead of guessing a number that risks either truncation (too big) or
 // wasted round trips (too small; this used to be a fixed 19).
-static const size_t MAX_CHUNK_SIZE = 480;
+// Real-device testing (2026-07-10): requesting a 517 MTU and then actually
+// using a 480-byte chunk crashed the ESP32-S3 outright (interrupt watchdog
+// timeout on core 0, immediately on the very first large indicate() call).
+// NimBLE's internal mbuf/buffer pools are sized for a conventional working
+// range: 517 is the spec absolute max and isn't safely usable in practice
+// here. 180 is a much more conventional "extended MTU" value that's well
+// inside typical default pool sizing and still ~9x fewer round trips than
+// the original 19-byte chunks. If you want to push this higher later, raise
+// it incrementally (e.g. 180 -> 220 -> 260) with the "-debug" env and watch
+// for the same crash, rather than jumping back toward the max.
+static const size_t MAX_CHUNK_SIZE = 180;
 static const size_t MIN_CHUNK_SIZE = 16; // conservative floor if MTU negotiation hasn't happened yet
 static size_t bleChunkSize = MIN_CHUNK_SIZE;
 
@@ -73,6 +83,29 @@ static size_t pendingOffset = 0;
 static uint8_t pendingReqId = 0;
 static uint8_t pendingSeq = 0;
 static bool pendingActive = false;
+
+// Real-device testing (2026-07-10): calling indicate() directly from within
+// the BLE write callback (onWrite, running on the "nimble_host" FreeRTOS
+// task) crashed with "Stack canary watchpoint triggered (nimble_host)" - a
+// stack overflow on that task - after several chunks, not the first. Each
+// ack arrives as its own onWrite call, and if that call is already nested
+// inside NimBLE's own processing of the *previous* indicate() (rather than
+// a fresh top-level dispatch), calling indicate() again from there chains
+// the stack deeper instead of unwinding, growing with every chunk until it
+// overflows. Fix: never call sendNextChunk()/indicate() directly from a BLE
+// callback - just set this flag, and let bleServerHandle() (called from the
+// main loop(), a normal task with its own, much larger stack) do the actual
+// send on the next iteration.
+static volatile bool chunkSendPending = false;
+
+// Same reasoning as chunkSendPending, but for the command itself: real
+// hardware testing (2026-07-10) showed handleCommand() can also overflow
+// the nimble_host stack if called directly from onWrite() (specifically
+// for ops that write to LittleFS - see the comment in onWrite()'s "ack"
+// handling for the crash pattern). So the raw command is stashed here and
+// actually dispatched from bleServerHandle() in the main loop instead.
+static String pendingCommand;
+static volatile bool pendingCommandReady = false;
 
 // ---- tiny key=value command parser (percent-decoded), mirroring
 // WebServer's hasArg()/arg() but over the BLE command string ----
@@ -186,7 +219,7 @@ static void startResponse(const String& payload, uint8_t reqId) {
   pendingActive = true;
   BLE_LOG("BLE TX: reqId=%u starting response, %u bytes, chunk size %u\n",
     reqId, (unsigned)payload.length(), (unsigned)bleChunkSize);
-  sendNextChunk();
+  chunkSendPending = true; // sent from bleServerHandle() in the main loop, not from here (see chunkSendPending's comment)
 }
 
 // ---- JSON builders (mirror the shapes WebUI.cpp already sends over HTTP) ----
@@ -548,7 +581,7 @@ class RxCallbacks : public NimBLECharacteristicCallbacks {
       uint8_t ackSeq = (uint8_t)p.getInt("seq", 255);
       uint8_t lastSentSeq = (uint8_t)(pendingSeq - 1);
       if (pendingActive && ackReqId == pendingReqId && ackSeq == lastSentSeq) {
-        sendNextChunk();
+        chunkSendPending = true; // sent from bleServerHandle() in the main loop, not from here (see chunkSendPending's comment)
       } else {
         BLE_LOG("BLE: ignoring stray/late ack reqId=%u seq=%u (pendingActive=%d pendingReqId=%u lastSentSeq=%u)\n",
           ackReqId, ackSeq, pendingActive ? 1 : 0, pendingReqId, lastSentSeq);
@@ -556,12 +589,18 @@ class RxCallbacks : public NimBLECharacteristicCallbacks {
       return;
     }
 
-    uint8_t reqId = (uint8_t)p.getInt("_id", 0); // client-generated, echoed back in every response chunk
-    BLE_LOG("BLE RX: reqId=%u %u bytes: %s\n", reqId, (unsigned)cmd.length(), cmd.c_str());
-    String response = handleCommand(cmd);
-    BLE_LOG("BLE: reqId=%u response ready, %u bytes: %s%s\n", reqId, (unsigned)response.length(),
-      response.substring(0, 120).c_str(), response.length() > 120 ? "..." : "");
-    startResponse(response, reqId);
+    // Everything else (an actual command) is deferred to the main loop too -
+    // not just the response send. Real-device testing (2026-07-10) showed
+    // handleCommand() itself can overflow the nimble_host task's stack for
+    // any op that touches LittleFS (saveEffect/savePalette/deletePreset/etc:
+    // presetCreate/categoryGetOrCreate/paletteCreate all write to flash) -
+    // that extra call depth stacked on top of whatever NimBLE itself has
+    // already used in this context is what crashed, not anything specific
+    // to the BLE protocol logic. Every read-only op (status/meta/list*/etc)
+    // had already run fine dozens of times before the first flash-writing
+    // one crashed, which is why it took a while to show up.
+    pendingCommand = cmd;
+    pendingCommandReady = true;
   }
 };
 
@@ -591,7 +630,10 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 
 void bleServerInit() {
   NimBLEDevice::init(BLE_DEVICE_NAME);
-  NimBLEDevice::setMTU(517);
+  // 517 is the spec's absolute max but crashed real hardware (see the
+  // MAX_CHUNK_SIZE comment above); 247 is a conventional "extended MTU"
+  // value well inside NimBLE's default buffer pool sizing.
+  NimBLEDevice::setMTU(247);
 
   NimBLEServer* server = NimBLEDevice::createServer();
   server->setCallbacks(new ServerCallbacks());
@@ -607,4 +649,21 @@ void bleServerInit() {
   advertising->start();
 
   BLE_LOG("BLE: advertising as \"%s\", service %s\n", BLE_DEVICE_NAME, SERVICE_UUID);
+}
+
+void bleServerHandle() {
+  if (pendingCommandReady) {
+    pendingCommandReady = false;
+    BleParams p(pendingCommand);
+    uint8_t reqId = (uint8_t)p.getInt("_id", 0); // client-generated, echoed back in every response chunk
+    BLE_LOG("BLE RX: reqId=%u %u bytes: %s\n", reqId, (unsigned)pendingCommand.length(), pendingCommand.c_str());
+    String response = handleCommand(pendingCommand);
+    BLE_LOG("BLE: reqId=%u response ready, %u bytes: %s%s\n", reqId, (unsigned)response.length(),
+      response.substring(0, 120).c_str(), response.length() > 120 ? "..." : "");
+    startResponse(response, reqId); // just sets chunkSendPending; picked up below in this same call
+  }
+  if (chunkSendPending) {
+    chunkSendPending = false;
+    sendNextChunk();
+  }
 }

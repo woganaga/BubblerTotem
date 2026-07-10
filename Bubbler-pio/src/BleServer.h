@@ -10,3 +10,8 @@
 // AudioInput, WifiSetup) as the on-device WiFi WebUI - this is purely an
 // additional transport, not a second implementation of the app's behavior.
 void bleServerInit();
+
+// call every loop() iteration: actually sends the next response chunk, if
+// one is due (see BleServer.cpp - chunk sends are deferred out of the BLE
+// callback context and picked up here instead)
+void bleServerHandle();

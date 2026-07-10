@@ -38,6 +38,7 @@ void setup() {
 
 void loop() {
   webUIHandle();
+  bleServerHandle();
   otaHandle();
   audioUpdate(millis());
 
