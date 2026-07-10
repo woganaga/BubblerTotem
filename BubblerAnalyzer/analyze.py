@@ -108,7 +108,7 @@ def normalized_acf(env, fps):
     var = ((env - mu) ** 2).mean()
     min_lag = max(2, round(fps * 60.0 / MAX_BPM))
     max_lag = min(round(fps * 60.0 / MIN_BPM), (n - 1) // 2)
-    hi = min(max_lag * 2 + 1, n - 1)
+    hi = min(max_lag * 4 + 2, n - 1)  # through 4x the beat lag, for comb harmonics
     r = np.zeros(hi + 1)
     if var < 1e-12:
         return r, min_lag, max_lag
@@ -140,6 +140,51 @@ def pick_tempo(r, min_lag, max_lag, fps):
     while bpm > MAX_BPM:
         bpm *= 0.5
     return bpm, max(0.0, min(1.0, peak_r))
+
+
+def pick_tempo_comb(r, fps, hi=None):
+    """Proposed picker: comb over a continuous BPM grid with interpolated ACF.
+
+    Avoids integer-lag snapping entirely: candidate tempos whose beat period
+    is fractional (160 BPM = lag 11.72 at 31.25fps) still get full credit
+    for their 2/3/4-beat correlation peaks.
+    """
+    if hi is None:
+        hi = len(r) - 1
+    lags = np.arange(len(r))
+
+    def r_lin(x):
+        if x < 1 or x > hi:
+            return None
+        return float(np.interp(x, lags, r))
+
+    weights = (1.0, 0.7, 0.5, 0.35)
+    best_bpm, best_score, best_conf = 0.0, -1e9, 0.0
+    for bpm in np.arange(MIN_BPM, MAX_BPM + 0.25, 0.5):
+        tau = fps * 60.0 / bpm
+        num, den = 0.0, 0.0
+        for k, w in enumerate(weights, start=1):
+            v = r_lin(k * tau)
+            if v is None:
+                break
+            num += w * v
+            den += w
+        if den < 1.5:  # require at least the 1- and 2-beat lags
+            continue
+        score = num / den
+        # Half-lag penalty: strong correlation at tau/2 means the envelope
+        # also pulses between this candidate's beats - i.e. the true tempo
+        # is probably 2x this candidate (the classic half-time impostor,
+        # which for impulse-train input has perfectly aligned harmonics and
+        # can't be told apart by the comb alone).
+        half = r_lin(tau / 2.0)
+        if half is not None and half > 0:
+            score -= 0.5 * half
+        lg = math.log2(bpm / 120.0)
+        score *= math.exp(-0.5 * (lg / 1.5) ** 2)  # very wide prior, tie-break only
+        if score > best_score:
+            best_score, best_bpm, best_conf = score, bpm, num / den
+    return best_bpm, max(0.0, min(1.0, best_conf))
 
 
 def main():
@@ -178,14 +223,22 @@ def main():
     if args.bpm:
         print(f"ground truth {args.bpm:.0f} BPM -> offline error {bpm_off - args.bpm:+.1f}")
 
-    # sliding-window tempo trace (how the estimate would settle over time)
-    trace_t, trace_bpm, trace_conf = [], [], []
+    bpm_comb, conf_comb = pick_tempo_comb(r, fps)
+    print(f"proposed comb picker: {bpm_comb:.1f} BPM  confidence {conf_comb:.2f}")
+    if args.bpm:
+        print(f"ground truth {args.bpm:.0f} BPM -> comb error {bpm_comb - args.bpm:+.1f}")
+
+    # sliding-window tempo traces (how each picker settles over time)
+    trace_t, trace_bpm, trace_conf, trace_cbpm, trace_cconf = [], [], [], [], []
     for end in range(ONSET_HIST // 4, len(onset), 8):
         rw, lo, hi_l = normalized_acf(onset[:end], fps)
         b, c = pick_tempo(rw, lo, hi_l, fps)
+        cb, cc = pick_tempo_comb(rw, fps)
         trace_t.append(end / fps)
         trace_bpm.append(b)
         trace_conf.append(c)
+        trace_cbpm.append(cb)
+        trace_cconf.append(cc)
 
     # ---- 3. device vs offline comparison ----
     print("\n-- Device (logged during capture) --")
@@ -247,8 +300,10 @@ def main():
     axes[2].set_title("Normalized ACF vs lag (green lines: ground-truth beat + 2-beat lags)")
     axes[2].legend(fontsize=8)
 
-    axes[3].plot(trace_t, trace_bpm, label="offline bpm (sliding)")
-    axes[3].plot(trace_t, np.array(trace_conf) * 100, label="offline conf x100")
+    axes[3].plot(trace_t, trace_bpm, label="offline bpm (current fw)")
+    axes[3].plot(trace_t, np.array(trace_conf) * 100, label="offline conf x100 (current fw)")
+    axes[3].plot(trace_t, trace_cbpm, lw=2, label="offline bpm (proposed comb)")
+    axes[3].plot(trace_t, np.array(trace_cconf) * 100, lw=1, label="offline conf x100 (comb)")
     if len(meta):
         axes[3].plot(tm, m["bpm"], ls="--", label="device bpm")
         axes[3].plot(tm, m["conf"] * 100, ls="--", label="device conf x100")

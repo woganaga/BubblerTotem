@@ -194,10 +194,8 @@ static void tempoLost() {
 // silence, high only for real periodicity - so the peak's r value IS the
 // confidence, and doubles as the silence gate.
 static void computeTempo() {
-  int minLag = (int)roundf(FPS * 60.0f / MAX_BPM);
   int maxLag = (int)roundf(FPS * 60.0f / MIN_BPM);
-  if (minLag < 2) minLag = 2;
-  if (maxLag > (ONSET_HIST - 1) / 2) maxLag = (ONSET_HIST - 1) / 2; // harmonic scoring reads r at 2*lag
+  if (maxLag > (ONSET_HIST - 1) / 2) maxLag = (ONSET_HIST - 1) / 2;
 
   float mu = 0;
   for (int i = 0; i < ONSET_HIST; i++) mu += onsetHist[i];
@@ -211,9 +209,8 @@ static void computeTempo() {
     return;
   }
 
-  int lo = minLag - 1;      // one extra lag each side for the peak interpolation below
-  int hi = maxLag * 2 + 1;  // through 2*lag for harmonic scoring
-  if (lo < 1) lo = 1;
+  int lo = 2;               // down to ~half the fastest beat lag, for the half-lag penalty
+  int hi = maxLag * 4 + 2;  // through 4*lag for the comb harmonics
   if (hi > ONSET_HIST - 1) hi = ONSET_HIST - 1;
   for (int lag = lo; lag <= hi; lag++) {
     float s = 0;
@@ -221,42 +218,56 @@ static void computeTempo() {
     acf[lag] = s / ((ONSET_HIST - lag) * var);
   }
 
-  // Pick the beat period: correlation at the lag plus support from its
-  // double - the true tempo also correlates at 2 beats, so it outscores
-  // half-time impostors on evidence. The tempo prior stays, but wide
-  // (sigma = 1 octave, was 0.6): a tie-breaker, not a dictator - the old
-  // narrow prior actively fought legitimate fast tempi like 160 BPM.
-  float best = -1e9f;
-  int bestLag = 0;
-  for (int lag = minLag; lag <= maxLag; lag++) {
-    float score = acf[lag] + 0.5f * acf[lag * 2];
-    float lg = log2f((FPS * 60.0f / lag) / 120.0f);
+  // Comb search over a continuous BPM grid, reading the ACF at interpolated
+  // fractional lags. Metronome testing (2026-07-10 capture) showed integer-
+  // lag picking fails structurally: 160 BPM = lag 11.72 at 31.25 fps, so its
+  // correlation splits across lags 11/12 and any integer evaluation of its
+  // harmonics (2*12=24 vs the true 23.4) misses the real peaks - while the
+  // half-tempo impostor at lag 23 sits nearly on-peak everywhere and wins.
+  // The comb evaluates every candidate at its true fractional lag chain.
+  static const float COMB_W[4] = { 1.0f, 0.7f, 0.5f, 0.35f };
+  float bestScore = -1e9f, bestBpm = 0.0f, bestConf = 0.0f;
+  for (float cand = MIN_BPM; cand <= MAX_BPM + 0.25f; cand += 0.5f) {
+    float tau = FPS * 60.0f / cand;
+    float num = 0.0f, den = 0.0f;
+    for (int k = 1; k <= 4; k++) {
+      float x = tau * (float)k;
+      if (x > (float)hi) break;
+      int xi = (int)x;
+      float xf = x - (float)xi;
+      float v = (xi >= hi) ? acf[hi] : acf[xi] * (1.0f - xf) + acf[xi + 1] * xf;
+      num += COMB_W[k - 1] * v;
+      den += COMB_W[k - 1];
+    }
+    if (den < 1.5f) continue; // need at least the 1- and 2-beat lags in range
+    float score = num / den;
+    // Half-lag penalty: strong correlation at tau/2 means the envelope also
+    // pulses *between* this candidate's beats, i.e. the real tempo is
+    // probably 2x this candidate. Without this, an impulse train (metronome)
+    // is unresolvable - every submultiple tempo has perfectly aligned
+    // harmonics too, and the device slid from 157 to ~88 BPM live.
+    float xh = tau * 0.5f;
+    if (xh >= (float)lo) {
+      int hI = (int)xh;
+      float hF = xh - (float)hI;
+      float half = (hI >= hi) ? acf[hi] : acf[hI] * (1.0f - hF) + acf[hI + 1] * hF;
+      if (half > 0.0f) score -= 0.5f * half;
+    }
+    float lg = log2f(cand / 120.0f) / 1.5f; // very wide prior: tie-breaker only
     score *= expf(-0.5f * lg * lg);
-    if (score > best) { best = score; bestLag = lag; }
+    if (score > bestScore) { bestScore = score; bestBpm = cand; bestConf = num / den; }
   }
-  if (bestLag <= 0) {
+  if (bestBpm <= 0.0f) {
     confidence = 0.0f;
     tempoLost();
     return;
   }
 
-  // Parabolic interpolation around the peak for a fractional beat period.
-  // At ~31 envelope frames/sec the integer lags near fast tempi are >10 BPM
-  // apart (160 BPM = lag 11.7 - there is no integer bin for it, its energy
-  // splits across lags 11 and 12), which is why fast beats couldn't be
-  // followed; the quadratic fit recovers the in-between period.
-  float y0 = acf[bestLag - 1], y1 = acf[bestLag], y2 = acf[bestLag + 1];
-  float denom = y0 - 2.0f * y1 + y2;
-  float frac = (fabsf(denom) > 1e-9f) ? 0.5f * (y0 - y2) / denom : 0.0f;
-  if (frac > 0.5f) frac = 0.5f;
-  if (frac < -0.5f) frac = -0.5f;
-  float peakR = y1 - 0.25f * (y0 - y2) * frac; // interpolated peak height
-
-  float bpm = (FPS * 60.0f / ((float)bestLag + frac)) * tempoScale;
+  float bpm = bestBpm * tempoScale;
   if (bpm < MIN_BPM) bpm *= 2.0f;
   if (bpm > MAX_BPM) bpm *= 0.5f;
 
-  confidence = peakR < 0.0f ? 0.0f : (peakR > 1.0f ? 1.0f : peakR);
+  confidence = bestConf < 0.0f ? 0.0f : (bestConf > 1.0f ? 1.0f : bestConf);
 
   if (confidence < 0.15f) { // noise floor for a real correlation peak
     tempoLost();
@@ -264,13 +275,15 @@ static void computeTempo() {
   }
   lowConfCount = 0;
 
-  if (smoothedBpm < 1e-3f) {
+  if (smoothedBpm < 1e-3f || fabsf(bpm - smoothedBpm) > 0.15f * smoothedBpm) {
+    // fresh lock, or a metrical-level flip (half/double/2:3): snap to the
+    // new estimate - EMA-blending across a flip slides the reported tempo
+    // through every wrong value in between (watched live: 157 -> ~88 over
+    // ~10s) and beat-synced effects track that garbage the whole way down
     smoothedBpm = bpm;
   } else {
-    // Once confidently locked, blend new estimates in much more slowly -
-    // the tempo should settle and hold steady rather than wander with
-    // every wobble in the onset envelope. While unconfident, re-acquire
-    // quickly.
+    // small corrections: once confidently locked, blend slowly so the
+    // tempo holds steady rather than wandering with every wobble
     float alpha = confidence > 0.5f ? 0.05f : 0.2f;
     smoothedBpm = smoothedBpm * (1.0f - alpha) + bpm * alpha;
   }
@@ -423,13 +436,10 @@ static void writeRecordingFrame() {
       // final autocorrelation snapshot (most recent computeTempo result),
       // so the offline analysis can compare its own ACF to the device's
       micMetaFile.print("#ACF\nlag,bpm,r\n");
-      int minLag = (int)roundf(FPS * 60.0f / MAX_BPM);
       int maxLag = (int)roundf(FPS * 60.0f / MIN_BPM);
-      if (minLag < 2) minLag = 2;
       if (maxLag > (ONSET_HIST - 1) / 2) maxLag = (ONSET_HIST - 1) / 2;
-      int lo = minLag - 1;
-      int hi = maxLag * 2 + 1;
-      if (lo < 1) lo = 1;
+      int lo = 2;
+      int hi = maxLag * 4 + 2; // same range computeTempo now fills
       if (hi > ONSET_HIST - 1) hi = ONSET_HIST - 1;
       char row[48];
       for (int lag = lo; lag <= hi; lag++) {
