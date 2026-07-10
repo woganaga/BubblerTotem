@@ -38,12 +38,17 @@ static const char* TX_CHAR_UUID = "7a5a1002-0002-4b70-8f1a-9d6e9c9a2b10"; // not
 // is slower (a full round trip per chunk) but doesn't depend on whatever
 // the phone's BLE stack/bridge does under the hood with rapid updates.
 //
-// 19 data bytes (+ 3 header bytes = 22) is deliberately conservative: it's
-// close to the largest payload that reliably fits in an ATT PDU even at the
-// default, un-negotiated minimum MTU (23 bytes total / 20 usable), so this
-// can't be truncated regardless of what MTU the central actually negotiates
-// or when.
-static const size_t BLE_CHUNK_SIZE = 19;
+// The ack handshake fixes correctness regardless of chunk size, but the
+// round trip it costs per chunk is the dominant latency now - so the chunk
+// size should be as large as the link actually allows, not a fixed guess.
+// MAX_CHUNK_SIZE just sizes the send buffer; the size actually used per
+// chunk (bleChunkSize) is set from the real negotiated MTU in onMTUChange()
+// below, so it adapts to whatever the phone/bridge actually supports
+// instead of guessing a number that risks either truncation (too big) or
+// wasted round trips (too small; this used to be a fixed 19).
+static const size_t MAX_CHUNK_SIZE = 480;
+static const size_t MIN_CHUNK_SIZE = 16; // conservative floor if MTU negotiation hasn't happened yet
+static size_t bleChunkSize = MIN_CHUNK_SIZE;
 
 static NimBLECharacteristic* txChar = nullptr;
 
@@ -136,10 +141,10 @@ static void sendNextChunk() {
 
   size_t len = pendingPayload.length();
   size_t remaining = len - pendingOffset;
-  size_t chunkLen = remaining > BLE_CHUNK_SIZE ? BLE_CHUNK_SIZE : remaining;
+  size_t chunkLen = remaining > bleChunkSize ? bleChunkSize : remaining;
   bool more = (pendingOffset + chunkLen) < len;
 
-  uint8_t buf[BLE_CHUNK_SIZE + 3];
+  uint8_t buf[MAX_CHUNK_SIZE + 3];
   buf[0] = more ? 1 : 0;
   buf[1] = pendingReqId;
   buf[2] = pendingSeq;
@@ -167,7 +172,7 @@ static void startResponse(const String& payload, uint8_t reqId) {
   pendingSeq = 0;
   pendingActive = true;
   Serial.printf("BLE TX: reqId=%u starting response, %u bytes, chunk size %u\n",
-    reqId, (unsigned)payload.length(), (unsigned)BLE_CHUNK_SIZE);
+    reqId, (unsigned)payload.length(), (unsigned)bleChunkSize);
   sendNextChunk();
 }
 
@@ -550,13 +555,24 @@ class RxCallbacks : public NimBLECharacteristicCallbacks {
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* s, NimBLEConnInfo& connInfo) override {
     Serial.printf("BLE: central connected, handle=%u\n", connInfo.getConnHandle());
+    bleChunkSize = MIN_CHUNK_SIZE; // reset to the safe floor until this connection's onMTUChange fires
+    // Ask the central for a tighter connection interval (units of 1.25ms:
+    // 6-12 -> 7.5-15ms, vs. a default that's often 30-50ms+) and no slave
+    // latency, since every ack round trip waits on this interval. iOS in
+    // particular doesn't always honor peripheral-requested params, but
+    // there's no downside to asking.
+    s->updateConnParams(connInfo.getConnHandle(), 6, 12, 0, 200);
   }
   void onDisconnect(NimBLEServer* s, NimBLEConnInfo& connInfo, int reason) override {
     Serial.printf("BLE: central disconnected, reason=%d - resuming advertising\n", reason);
     NimBLEDevice::startAdvertising(); // resume advertising so another central can connect
   }
   void onMTUChange(uint16_t mtu, NimBLEConnInfo& connInfo) override {
-    Serial.printf("BLE: MTU negotiated = %u (usable payload ~%u bytes)\n", mtu, mtu > 3 ? mtu - 3 : 0);
+    size_t usable = (mtu > 6) ? ((size_t)mtu - 3 /* ATT opcode+handle */ - 3 /* our chunk header */) : MIN_CHUNK_SIZE;
+    if (usable < MIN_CHUNK_SIZE) usable = MIN_CHUNK_SIZE;
+    if (usable > MAX_CHUNK_SIZE) usable = MAX_CHUNK_SIZE;
+    bleChunkSize = usable;
+    Serial.printf("BLE: MTU negotiated = %u -> chunk size now %u bytes\n", mtu, (unsigned)bleChunkSize);
   }
 };
 

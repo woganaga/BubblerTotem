@@ -57,6 +57,8 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
 #debugPanel.open{display:flex}
 #debugToolbar{display:flex;gap:0.4em;margin-bottom:0.5em;flex-shrink:0}
 #debugToolbar button{flex:1;min-height:36px;padding:0.4em;font-size:0.85em}
+#debugVerboseLabel,#debugRelayLabel{display:flex;align-items:center;gap:0.4em;font-size:0.8em;color:#ccc;margin-bottom:0.4em;flex-shrink:0}
+#debugVerboseLabel input,#debugRelayLabel input{width:auto;margin:0}
 #debugLog{flex:1;overflow:auto;white-space:pre-wrap;word-break:break-all;font-family:'SF Mono',Menlo,Consolas,monospace;
   font-size:0.7em;line-height:1.45;color:#8f8;background:#111;border:1px solid #262626;border-radius:8px;padding:0.6em;margin:0}
 #debugLog .err{color:#ff8080}
@@ -72,6 +74,8 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
     <button class='tbtn' id='debugClearBtn' type='button'>Clear</button>
     <button class='tbtn' id='debugCloseBtn' type='button'>Close</button>
   </div>
+  <label id='debugVerboseLabel'><input type='checkbox' id='debugVerbose'> Verbose (per-chunk detail + hex dumps)</label>
+  <label id='debugRelayLabel'><input type='checkbox' id='debugRelay'> Relay log to device Serial monitor</label>
   <pre id='debugLog'></pre>
 </div>
 
@@ -111,26 +115,43 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
   var TX_UUID = '7a5a1002-0002-4b70-8f1a-9d6e9c9a2b10'; // notify: JSON responses out
 
   // ---- on-screen debug log (Bluefy has no easy devtools access, so this
-  // needs to be visible without a separate computer) ----
+  // needs to be visible without a separate computer). Both extra detail and
+  // the device-relay are opt-in (off by default) - each is itself extra BLE
+  // traffic, which is exactly what we're trying to keep off the wire once
+  // things are working normally. ----
   var debugLines = [];
   var MAX_DEBUG_LINES = 1000;
+  var verboseLogging = false;
+  var relayEnabled = false;
   var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
 
   function logDebug(msg, level) {
     var ts = (((window.performance && performance.now) ? performance.now() : Date.now()) - t0) / 1000;
     var line = '[' + ts.toFixed(3) + '] ' + msg;
+    var cls = level === 'error' ? 'err' : level === 'warn' ? 'warn' : '';
     debugLines.push({ text: line, level: level || 'info' });
-    if (debugLines.length > MAX_DEBUG_LINES) debugLines.shift();
+
     if (level === 'error') console.error(line); else if (level === 'warn') console.warn(line); else console.log(line);
+
     var el = document.getElementById('debugLog');
     if (el) {
-      el.innerHTML = debugLines.map(function (l) {
-        return '<span class="' + (l.level === 'error' ? 'err' : l.level === 'warn' ? 'warn' : '') + '">' +
-          l.text.replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }) + '</span>';
-      }).join('\n');
+      var span = document.createElement('span');
+      if (cls) span.className = cls;
+      span.textContent = line + '\n';
+      el.appendChild(span);
+      while (debugLines.length > MAX_DEBUG_LINES) {
+        debugLines.shift();
+        if (el.firstChild) el.removeChild(el.firstChild);
+      }
       el.scrollTop = el.scrollHeight;
     }
-    relayLogToDevice(line);
+    if (relayEnabled) relayLogToDevice(line);
+  }
+
+  // only logs (and, if enabled, relays) when verbose mode is on - for
+  // per-chunk/per-ack detail that's too noisy to want by default
+  function logVerbose(msg) {
+    if (verboseLogging) logDebug(msg);
   }
 
   // Best-effort mirror of the on-screen log to the device's own Serial
@@ -239,7 +260,7 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
       return;
     }
 
-    logDebug('BLE RX: reqId=' + respId + ' seq=' + seq + ' more=' + (more ? 1 : 0) + ' ' + dataLen +
+    logVerbose('BLE RX: reqId=' + respId + ' seq=' + seq + ' more=' + (more ? 1 : 0) + ' ' + dataLen +
       ' bytes, expecting reqId=' + this.pending.reqId + ' seq=' + this.pending.expectedSeq +
       ' | hex: ' + toHex(bytes));
 
@@ -273,6 +294,9 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
 
     if (!more) {
       clearTimeout(this.pending.watchdog);
+      var elapsedMs = Math.round((((window.performance && performance.now) ? performance.now() : Date.now()) - this.pending.startedAt));
+      logDebug('BLE: op "' + this.pending.op + '" (reqId ' + respId + ') complete - ' +
+        this.pending.chunks.length + ' chunks in ' + elapsedMs + 'ms');
       var resolve = this.pending.resolve;
       var allBytes = concatBytes(this.pending.chunks);
       this.pending = null;
@@ -289,7 +313,7 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
 
   BleLink.prototype._sendAck = function (reqId, seq) {
     var cmd = 'op=ack&_id=' + reqId + '&seq=' + seq;
-    logDebug('BLE TX: ack reqId=' + reqId + ' seq=' + seq);
+    logVerbose('BLE TX: ack reqId=' + reqId + ' seq=' + seq);
     var enc = new TextEncoder().encode(cmd);
     this.rxChar.writeValue(enc).catch(function (err) {
       logDebug('BLE: failed to write ack for reqId=' + reqId + ' seq=' + seq + ': ' + err.message, 'error');
@@ -340,7 +364,8 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
       if (!self.connected) { reject(new Error('Not connected')); return; }
       var reqId = self.nextReqId;
       self.nextReqId = (self.nextReqId + 1) & 0xff;
-      self.pending = { resolve: resolve, reject: reject, chunks: [], expectedSeq: 0, op: op, reqId: reqId, watchdog: null };
+      var startedAt = (window.performance && performance.now) ? performance.now() : Date.now();
+      self.pending = { resolve: resolve, reject: reject, chunks: [], expectedSeq: 0, op: op, reqId: reqId, watchdog: null, startedAt: startedAt };
       self._resetWatchdog(); // covers the wait for the *first* chunk too, not just gaps between later ones
       var cmd = 'op=' + encodeURIComponent(op) + '&_id=' + reqId;
       for (var k in (params || {})) {
@@ -348,7 +373,7 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
           cmd += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
         }
       }
-      logDebug('BLE TX: reqId=' + reqId + ' op=' + op + ' cmd="' + cmd + '"');
+      logVerbose('BLE TX: reqId=' + reqId + ' op=' + op + ' cmd="' + cmd + '"');
       var enc = new TextEncoder().encode(cmd);
       self.rxChar.writeValue(enc).catch(function (err) {
         logDebug('BLE TX: writeValue failed: ' + err.message, 'error');
@@ -776,6 +801,14 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
       sel.addRange(range);
       logDebug('clipboard API unavailable - log text selected, use your browser\'s copy action', 'warn');
     }
+  });
+  qs('#debugVerbose').addEventListener('change', function (e) {
+    verboseLogging = e.target.checked;
+    logDebug('Verbose logging ' + (verboseLogging ? 'enabled' : 'disabled'));
+  });
+  qs('#debugRelay').addEventListener('change', function (e) {
+    relayEnabled = e.target.checked;
+    logDebug('Relay to device Serial ' + (relayEnabled ? 'enabled' : 'disabled'));
   });
 
   logDebug('Page loaded. navigator.bluetooth available: ' + (!!navigator.bluetooth));
