@@ -1,6 +1,7 @@
 #include "Effects.h"
 #include "Rings.h"
 #include "Topology.h"
+#include "Color.h"
 
 static uint32_t speedToPeriodMs(uint8_t speedPct, uint32_t minMs, uint32_t maxMs) {
   if (speedPct < 1) speedPct = 1;
@@ -282,17 +283,6 @@ void effectSnow(const EffectParams& params, uint32_t nowMs) {
   }
 }
 
-// Blends between consecutive palette colors around a full circle (no black
-// padding, since the wheel is meant to be fully covered in color).
-static CRGB wheelColorAt(float uFraction, const Palette& palette) {
-  float t = uFraction * palette.count;
-  int index = (int)t;
-  uint8_t frac = (uint8_t)((t - index) * 255);
-  CRGB c0 = palette.colors[index % palette.count];
-  CRGB c1 = palette.colors[(index + 1) % palette.count];
-  return blend(c0, c1, frac);
-}
-
 static const uint32_t PINWHEEL_MIN_PERIOD_MS = 300;
 static const uint32_t PINWHEEL_MAX_PERIOD_MS = 4000;
 
@@ -305,7 +295,7 @@ void effectPinwheel(const EffectParams& params, uint32_t nowMs) {
     for (uint8_t pos = 0; pos < LEDS_PER_RING; pos++) {
       float u = (float)pos / LEDS_PER_RING + phase;
       u -= floorf(u); // wrap to [0,1)
-      setRingLED(ring, pos, wheelColorAt(u, params.palette));
+      setRingLED(ring, pos, paletteBlend(params.palette, u, true));
     }
   }
 }
