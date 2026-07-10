@@ -19,33 +19,42 @@ static const char* RX_CHAR_UUID = "7a5a1001-0002-4b70-8f1a-9d6e9c9a2b10"; // wri
 static const char* TX_CHAR_UUID = "7a5a1002-0002-4b70-8f1a-9d6e9c9a2b10"; // notify: JSON responses out
 
 // Responses can be a few KB (e.g. "meta"), well beyond one ATT MTU, so they
-// go out as a sequence of GATT indications (not notifications - indications
-// require the peer to ack each one before the next can be sent, which is
-// what makes multi-chunk delivery *at the radio layer* reliable; plain
-// notifications have no flow control and a chunk can silently drop). Each
-// chunk is prefixed with three bytes: [0]=more (1 if more chunks follow, 0
-// if last), [1]=request id (echoed from the command's "_id" param), [2]=
-// chunk sequence number within this response (wraps at 256). Two earlier,
-// weaker designs are why this has both a request id AND a sequence number:
-// GATT-level acking only proves the phone's Bluetooth stack got a chunk, not
-// that the phone's *app* (e.g. Bluefy's bridge into its WebView) relayed it
-// to the page intact - a sequence number alone catches a gap/repeat/reorder
-// *within* one response, but a late straggler chunk from a *previous*
-// request (a retry, a fast poll) can still land during a new one and
-// coincidentally match its expected sequence number. The request id lets the
-// client tell "stale chunk from an old request" (silently ignored) apart
-// from "corrupted chunk in the current request" (rejected with a clear
-// error) instead of silently concatenating either into bad JSON.
+// go out as a sequence of chunks, each prefixed with three bytes: [0]=more
+// (1 if more chunks follow, 0 if last), [1]=request id (echoed from the
+// command's "_id" param), [2]=chunk sequence number within this response
+// (wraps at 256).
+//
+// Real-device testing (2026-07-10) proved GATT indications alone are NOT
+// enough: indicate() returning true only proves the phone's Bluetooth stack
+// received the chunk - it does NOT prove the phone's *app* (Bluefy bridging
+// into its WebView) relayed it to the page. Sending all chunks back-to-back
+// as fast as indicate() allows, a real test showed the client's JS only
+// ever saw the *last* of ~99 chunks; the other 98 were coalesced/dropped
+// somewhere between the radio and the WebView before ever reaching
+// `characteristicvaluechanged`. So this now uses an explicit
+// application-level handshake: send ONE chunk, then wait - the client must
+// write an "ack" command back (op=ack&_id=<reqId>&seq=<seq just received>)
+// before the next chunk is sent. See onWrite()'s "ack" handling below. This
+// is slower (a full round trip per chunk) but doesn't depend on whatever
+// the phone's BLE stack/bridge does under the hood with rapid updates.
 //
 // 19 data bytes (+ 3 header bytes = 22) is deliberately conservative: it's
 // close to the largest payload that reliably fits in an ATT PDU even at the
 // default, un-negotiated minimum MTU (23 bytes total / 20 usable), so this
 // can't be truncated regardless of what MTU the central actually negotiates
-// or when. Once this is confirmed reliable on real hardware, this can
-// likely be raised (e.g. ~180) for fewer round trips.
+// or when.
 static const size_t BLE_CHUNK_SIZE = 19;
 
 static NimBLECharacteristic* txChar = nullptr;
+
+// ---- in-progress response state (one at a time; a new command overwrites
+// whatever the previous one was doing, which is fine since the client only
+// ever has one request in flight) ----
+static String pendingPayload;
+static size_t pendingOffset = 0;
+static uint8_t pendingReqId = 0;
+static uint8_t pendingSeq = 0;
+static bool pendingActive = false;
 
 // ---- tiny key=value command parser (percent-decoded), mirroring
 // WebServer's hasArg()/arg() but over the BLE command string ----
@@ -119,43 +128,47 @@ static bool argInt(const BleParams& p, const char* name, int lo, int hi, int& ou
   return true;
 }
 
-static void sendChunked(const String& payload, uint8_t reqId) {
-  if (!txChar) return;
-  size_t len = payload.length();
-  size_t offset = 0;
+// Sends exactly one chunk (the next unsent one) of the in-progress response.
+// Called once to kick off a new response, and again each time the client's
+// "ack" for the previous chunk arrives.
+static void sendNextChunk() {
+  if (!pendingActive || !txChar) return;
+
+  size_t len = pendingPayload.length();
+  size_t remaining = len - pendingOffset;
+  size_t chunkLen = remaining > BLE_CHUNK_SIZE ? BLE_CHUNK_SIZE : remaining;
+  bool more = (pendingOffset + chunkLen) < len;
+
   uint8_t buf[BLE_CHUNK_SIZE + 3];
-  uint8_t seq = 0;
-  uint32_t startMs = millis();
+  buf[0] = more ? 1 : 0;
+  buf[1] = pendingReqId;
+  buf[2] = pendingSeq;
+  memcpy(buf + 3, pendingPayload.c_str() + pendingOffset, chunkLen);
+  txChar->setValue(buf, chunkLen + 3);
+  bool acked = txChar->indicate();
 
-  Serial.printf("BLE TX: reqId=%u %u bytes total, chunk size %u -> ~%u chunks\n",
-    reqId, (unsigned)len, (unsigned)BLE_CHUNK_SIZE, (unsigned)((len + BLE_CHUNK_SIZE - 1) / BLE_CHUNK_SIZE));
+  Serial.printf("BLE TX: reqId=%u chunk seq=%u offset=%u len=%u more=%d gattAck=%d\n",
+    pendingReqId, pendingSeq, (unsigned)pendingOffset, (unsigned)chunkLen, more ? 1 : 0, acked ? 1 : 0);
 
-  do {
-    size_t remaining = len - offset;
-    size_t chunkLen = remaining > BLE_CHUNK_SIZE ? BLE_CHUNK_SIZE : remaining;
-    bool more = (offset + chunkLen) < len;
-    buf[0] = more ? 1 : 0;
-    buf[1] = reqId;
-    buf[2] = seq;
-    memcpy(buf + 3, payload.c_str() + offset, chunkLen);
-    txChar->setValue(buf, chunkLen + 3);
-    bool acked = txChar->indicate();
-    Serial.printf("BLE TX: reqId=%u chunk seq=%u offset=%u len=%u more=%d acked=%d\n",
-      reqId, seq, (unsigned)offset, (unsigned)chunkLen, more ? 1 : 0, acked ? 1 : 0);
-    if (!acked) {
-      Serial.println("BLE TX: indicate() failed (peer didn't ack - disconnected/timed out?), aborting response");
-      return; // stop rather than send more into the void; response is incomplete on the client
-    }
-    offset += chunkLen;
-    seq++;
-  } while (offset < len);
-
-  if (len == 0) {
-    uint8_t buf0[3] = { 0, reqId, 0 };
-    txChar->setValue(buf0, 3);
-    txChar->indicate();
+  pendingOffset += chunkLen;
+  pendingSeq++;
+  if (!more) {
+    pendingActive = false;
+    Serial.printf("BLE TX: reqId=%u response fully sent (%u bytes, %u chunks)\n",
+      pendingReqId, (unsigned)len, pendingSeq);
   }
-  Serial.printf("BLE TX: reqId=%u done, %u chunks in %lums\n", reqId, seq, (unsigned long)(millis() - startMs));
+  // else: wait for the client's "ack" command (see onWrite) before sending the next chunk
+}
+
+static void startResponse(const String& payload, uint8_t reqId) {
+  pendingPayload = payload;
+  pendingOffset = 0;
+  pendingReqId = reqId;
+  pendingSeq = 0;
+  pendingActive = true;
+  Serial.printf("BLE TX: reqId=%u starting response, %u bytes, chunk size %u\n",
+    reqId, (unsigned)payload.length(), (unsigned)BLE_CHUNK_SIZE);
+  sendNextChunk();
 }
 
 // ---- JSON builders (mirror the shapes WebUI.cpp already sends over HTTP) ----
@@ -500,12 +513,37 @@ class RxCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
     String cmd(c->getValue().c_str());
     BleParams p(cmd);
+    String op = p.get("op");
+
+    // Fire-and-forget: the client relays its own debug log here so both
+    // sides show up in one place (this Serial monitor) instead of needing
+    // to copy text off a phone. No response is sent for this op.
+    if (op == "clientLog") {
+      Serial.printf("JS: %s\n", p.get("msg").c_str());
+      return;
+    }
+
+    // The client acking the chunk it just received - send it the next one.
+    // (No response of its own; this IS the continuation of the response.)
+    if (op == "ack") {
+      uint8_t ackReqId = (uint8_t)p.getInt("_id", 255);
+      uint8_t ackSeq = (uint8_t)p.getInt("seq", 255);
+      uint8_t lastSentSeq = (uint8_t)(pendingSeq - 1);
+      if (pendingActive && ackReqId == pendingReqId && ackSeq == lastSentSeq) {
+        sendNextChunk();
+      } else {
+        Serial.printf("BLE: ignoring stray/late ack reqId=%u seq=%u (pendingActive=%d pendingReqId=%u lastSentSeq=%u)\n",
+          ackReqId, ackSeq, pendingActive ? 1 : 0, pendingReqId, lastSentSeq);
+      }
+      return;
+    }
+
     uint8_t reqId = (uint8_t)p.getInt("_id", 0); // client-generated, echoed back in every response chunk
     Serial.printf("BLE RX: reqId=%u %u bytes: %s\n", reqId, (unsigned)cmd.length(), cmd.c_str());
     String response = handleCommand(cmd);
     Serial.printf("BLE: reqId=%u response ready, %u bytes: %s%s\n", reqId, (unsigned)response.length(),
       response.substring(0, 120).c_str(), response.length() > 120 ? "..." : "");
-    sendChunked(response, reqId);
+    startResponse(response, reqId);
   }
 };
 

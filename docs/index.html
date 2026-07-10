@@ -130,6 +130,20 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
       }).join('\n');
       el.scrollTop = el.scrollHeight;
     }
+    relayLogToDevice(line);
+  }
+
+  // Best-effort mirror of the on-screen log to the device's own Serial
+  // monitor, so both sides of a failure show up in one place without
+  // copy-pasting off a phone. Deliberately bypasses the normal
+  // send()/_sendNow() queue (fire-and-forget, no response expected, and
+  // critically must NOT call logDebug itself or this recurses forever).
+  function relayLogToDevice(line) {
+    if (!link || !link.connected || !link.rxChar) return;
+    var msg = line.length > 140 ? line.slice(0, 140) + '...' : line;
+    var cmd = 'op=clientLog&msg=' + encodeURIComponent(msg);
+    var enc = new TextEncoder().encode(cmd);
+    link.rxChar.writeValue(enc).catch(function () { /* best-effort only */ });
   }
 
   function toHex(bytes) {
@@ -147,15 +161,18 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
     return out;
   }
 
-  // ---- BLE transport: one command in flight at a time (queued), chunked
-  // JSON responses reassembled from a request-id + sequence-numbered
-  // indication stream. See BleServer.cpp's sendChunked() for the wire
-  // format (must match exactly): each chunk is
-  // [more:1 byte][reqId:1 byte][seq:1 byte][utf8 data...]. The request id
-  // (generated here, echoed by the firmware) lets a late straggler chunk
-  // from an old/retried request be told apart from a genuinely corrupted
-  // chunk in the current one - the former is silently dropped, the latter
-  // rejects with a clear error. ----
+  // ---- BLE transport: one command in flight at a time (queued). Responses
+  // arrive as a sequence of chunks [more:1 byte][reqId:1 byte][seq:1 byte]
+  // [utf8 data...] (must match BleServer.cpp's sendNextChunk() exactly).
+  // GATT indications alone proved unreliable for back-to-back chunk
+  // delivery to this WebView (real testing showed only the *last* of ~99
+  // chunks ever arriving), so this now ack's each chunk explicitly: after
+  // processing one, it writes "op=ack&_id=<reqId>&seq=<seq>" back before
+  // the firmware sends the next. reqId lets a late straggler from an
+  // old/retried request be told apart from real corruption in the current
+  // one (former silently dropped, latter rejects with a clear error); a
+  // stall watchdog gives up and retries if no chunk arrives for a while
+  // (e.g. a lost ack write). ----
   var BleLink = function () {
     this.device = null;
     this.rxChar = null;
@@ -244,6 +261,7 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
         '): expected seq ' + this.pending.expectedSeq + ', got ' + seq +
         '. Bytes received so far (' + this.pending.chunks.reduce(function (n, c) { return n + c.length; }, 0) +
         '): ' + receivedHex, 'error');
+      clearTimeout(this.pending.watchdog);
       var reject = this.pending.reject;
       this.pending = null;
       reject(new Error('BLE response corrupted (chunk out of sequence)'));
@@ -252,12 +270,50 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
 
     this.pending.chunks.push(bytes.slice(3)); // slice() copies - the underlying buffer may be reused after this handler returns
     this.pending.expectedSeq = (seq + 1) & 0xff;
+
     if (!more) {
+      clearTimeout(this.pending.watchdog);
       var resolve = this.pending.resolve;
       var allBytes = concatBytes(this.pending.chunks);
       this.pending = null;
       resolve(allBytes);
+    } else {
+      this._resetWatchdog();
+      // Plain GATT indications proved unreliable for back-to-back delivery
+      // to this WebView (see the big comment on BleServer.cpp's
+      // sendNextChunk()) - the firmware now waits for this explicit ack
+      // before sending the next chunk.
+      this._sendAck(respId, seq);
     }
+  };
+
+  BleLink.prototype._sendAck = function (reqId, seq) {
+    var cmd = 'op=ack&_id=' + reqId + '&seq=' + seq;
+    logDebug('BLE TX: ack reqId=' + reqId + ' seq=' + seq);
+    var enc = new TextEncoder().encode(cmd);
+    this.rxChar.writeValue(enc).catch(function (err) {
+      logDebug('BLE: failed to write ack for reqId=' + reqId + ' seq=' + seq + ': ' + err.message, 'error');
+    });
+  };
+
+  // if no chunk arrives for STALL_TIMEOUT_MS after the last one (or after
+  // sending the command, for the very first chunk), treat the response as
+  // stuck rather than hanging forever - the ack scheme means a single lost
+  // ack write can otherwise stall a response permanently
+  var STALL_TIMEOUT_MS = 4000;
+
+  BleLink.prototype._resetWatchdog = function () {
+    var self = this;
+    if (!this.pending) return;
+    clearTimeout(this.pending.watchdog);
+    this.pending.watchdog = setTimeout(function () {
+      if (!self.pending) return;
+      logDebug('BLE: response for op "' + self.pending.op + '" (reqId ' + self.pending.reqId +
+        ') stalled - no chunk for ' + STALL_TIMEOUT_MS + 'ms, giving up on it', 'error');
+      var reject = self.pending.reject;
+      self.pending = null;
+      reject(new Error('BLE response timed out (stalled)'));
+    }, STALL_TIMEOUT_MS);
   };
 
   BleLink.prototype.send = function (op, params) {
@@ -266,9 +322,10 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
     return this.queue;
   };
 
-  // one automatic retry on a corrupted/failed response, with a short delay
-  // first so any late straggler chunks from the failed attempt land in a
-  // dead window (pending already cleared) instead of corrupting the retry
+  // one automatic retry on a corrupted/failed/stalled response, with a
+  // short delay first so any late straggler chunks from the failed attempt
+  // land in a dead window (pending already cleared) instead of corrupting
+  // the retry
   BleLink.prototype._sendWithRetry = function (op, params) {
     var self = this;
     return self._sendNow(op, params).catch(function (err) {
@@ -283,7 +340,8 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
       if (!self.connected) { reject(new Error('Not connected')); return; }
       var reqId = self.nextReqId;
       self.nextReqId = (self.nextReqId + 1) & 0xff;
-      self.pending = { resolve: resolve, reject: reject, chunks: [], expectedSeq: 0, op: op, reqId: reqId };
+      self.pending = { resolve: resolve, reject: reject, chunks: [], expectedSeq: 0, op: op, reqId: reqId, watchdog: null };
+      self._resetWatchdog(); // covers the wait for the *first* chunk too, not just gaps between later ones
       var cmd = 'op=' + encodeURIComponent(op) + '&_id=' + reqId;
       for (var k in (params || {})) {
         if (Object.prototype.hasOwnProperty.call(params, k)) {
@@ -294,6 +352,7 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
       var enc = new TextEncoder().encode(cmd);
       self.rxChar.writeValue(enc).catch(function (err) {
         logDebug('BLE TX: writeValue failed: ' + err.message, 'error');
+        if (self.pending) clearTimeout(self.pending.watchdog);
         self.pending = null;
         reject(err);
       });
