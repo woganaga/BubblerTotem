@@ -29,6 +29,10 @@ enum EffectId {
 
 extern const char* const EFFECT_NAMES[EFFECT_COUNT];
 
+// must be called once at boot (after the palette/category/preset stores'
+// own *Init() calls), before anything else in this file is used
+void effectManagerInit();
+
 void setActiveEffect(EffectId id);
 EffectId getActiveEffect();
 
@@ -37,3 +41,22 @@ EffectParams& effectParamsFor(EffectId id);
 
 // call every loop() iteration; runs whichever effect is active and shows the frame
 void runActiveEffect(uint32_t nowMs);
+
+// Which saved palette (see PaletteStore.h) is linked to a given effect
+// type's live params, or 255 if unlinked (the colors in effectParamsFor(id)
+// are used as-is). While linked, runActiveEffect() re-resolves the palette
+// into effectParamsFor(id).palette every frame, so editing a saved palette
+// updates any effect currently using it live.
+uint8_t getEffectPaletteId(EffectId id);
+void setEffectPaletteId(EffectId id, uint8_t paletteId);
+
+// Loads a saved effect preset (see EffectPresetStore.h) as the live, active
+// configuration, including its palette link. Returns false if presetId
+// doesn't resolve to a saved preset.
+bool loadEffectPreset(uint8_t presetId);
+
+// id of the saved preset the live config is currently tied to, or 255 if
+// it isn't tied to one (e.g. after picking a raw effect type, or before
+// ever saving one)
+uint8_t getActivePresetId();
+void setActivePresetId(uint8_t presetId);

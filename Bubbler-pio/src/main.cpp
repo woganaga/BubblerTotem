@@ -1,6 +1,9 @@
 #include <Arduino.h>
 #include <FastLED.h>
 #include "Rings.h"
+#include "PaletteStore.h"
+#include "CategoryStore.h"
+#include "EffectPresetStore.h"
 #include "EffectManager.h"
 #include "WifiSetup.h"
 #include "WebUI.h"
@@ -8,6 +11,10 @@
 #include "AudioInput.h"
 
 void setup() {
+  paletteStoreInit();
+  categoryStoreInit();
+  presetStoreInit();
+  effectManagerInit();
   ringsInit();
   wifiInit();
   webUIInit();

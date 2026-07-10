@@ -3,6 +3,9 @@
 #include <Update.h>
 #include "EffectManager.h"
 #include "AudioInput.h"
+#include "PaletteStore.h"
+#include "CategoryStore.h"
+#include "EffectPresetStore.h"
 
 static WebServer server(80);
 
@@ -140,7 +143,13 @@ static const char* PAGE_STYLE =
   ".band>span{display:block;height:100%;width:0%}"
   "#bassBar{background:#ff5252}#midBar{background:#4caf50}#trebBar{background:#8cf}"
   "#bpm{font-size:2em;margin:0.2em}#conf{color:#999;font-size:0.9em}"
-  ".tbtn{display:inline-block;padding:0.5em 1em;margin:0.25em;border-radius:8px;background:#333;color:#fff;border:none;font-size:1em;cursor:pointer}";
+  ".tbtn{display:inline-block;padding:0.5em 1em;margin:0.25em;border-radius:8px;background:#333;color:#fff;border:none;font-size:1em;cursor:pointer}"
+  ".swatches{display:flex;gap:0.25em;justify-content:center;margin:0.5em 0}"
+  ".swatches span{width:1.5em;height:1.5em;border-radius:4px;display:inline-block;border:1px solid #555}"
+  ".row{max-width:320px;margin:0.5em auto;padding:0.5em;background:#222;border-radius:8px;display:flex;align-items:center;gap:0.5em;text-align:left}"
+  ".row.active{outline:2px solid #4caf50}"
+  ".row>div:first-child{flex:1}"
+  ".row small{color:#999}";
 
 static void appendParamsForm(String& html) {
   EffectId active = getActiveEffect();
@@ -152,18 +161,25 @@ static void appendParamsForm(String& html) {
   html += "<form method='POST' action='/params'>";
   html += "<h2>" + String(EFFECT_NAMES[active]) + " settings</h2>";
 
-  html += "<label>Colors <select name='count'>";
-  for (uint8_t i = 1; i <= MAX_PALETTE_COLORS; i++) {
-    html += "<option value='" + String(i) + "'" + (i == p.palette.count ? " selected" : "") + ">" + String(i) + "</option>";
+  uint8_t linkedPalette = getEffectPaletteId(active);
+  html += "<label>Palette <select name='paletteId'>";
+  html += "<option value='none'" + String(linkedPalette == PALETTE_ID_NONE ? " selected" : "") + ">(Custom / unlinked)</option>";
+  uint8_t paletteIds[MAX_PALETTES];
+  uint8_t paletteN = paletteListIds(paletteIds, MAX_PALETTES);
+  for (uint8_t i = 0; i < paletteN; i++) {
+    const NamedPalette* np = paletteGet(paletteIds[i]);
+    if (!np) continue;
+    bool sel = paletteIds[i] == linkedPalette;
+    html += "<option value='" + String(paletteIds[i]) + "'" + (sel ? " selected" : "") + ">" + String(np->name) + "</option>";
   }
   html += "</select></label>";
 
-  html += "<label>";
-  for (uint8_t i = 0; i < MAX_PALETTE_COLORS; i++) {
-    CRGB c = (i < p.palette.count) ? p.palette.colors[i] : CRGB::Black;
-    html += "<input type='color' name='c" + String(i) + "' value='" + colorToHex(c) + "'>";
+  html += "<div class='swatches'>";
+  for (uint8_t i = 0; i < p.palette.count; i++) {
+    html += "<span style='background:" + colorToHex(p.palette.colors[i]) + "'></span>";
   }
-  html += "</label>";
+  html += "</div>";
+  html += "<div><a class='link' href='/palettes'>Manage palettes</a></div>";
 
   html += "<label>Speed <input type='range' name='speed' min='1' max='100' value='" + String(p.speedPct) + "'></label>";
   html += "<label>Intensity <input type='range' name='intensity' min='1' max='100' value='" + String(p.intensity) + "'></label>";
@@ -227,6 +243,38 @@ static void appendParamsForm(String& html) {
   html += "</form>";
 }
 
+// lets the user name the effect's current live configuration (type, palette
+// link, and params) and save it as a new preset, or update the preset it
+// was loaded from (see EffectPresetStore.h / the Saved Effects page)
+static void appendSaveForm(String& html) {
+  EffectId active = getActiveEffect();
+  if (active == EFFECT_OFF) return;
+
+  uint8_t presetId = getActivePresetId();
+  const EffectPreset* current = (presetId != PRESET_ID_NONE) ? presetGet(presetId) : nullptr;
+
+  html += "<form method='POST' action='/saved/save'>";
+  html += "<h2>Save this configuration</h2>";
+  if (current) html += "<input type='hidden' name='id' value='" + String(presetId) + "'>";
+  html += "<label>Name <input type='text' name='name' maxlength='" + String(PRESET_NAME_LEN - 1) + "' value='" + String(current ? current->name : "") + "' required></label>";
+
+  html += "<label>Category <select name='categoryId'>";
+  html += "<option value=''>(none)</option>";
+  uint8_t catIds[MAX_CATEGORIES];
+  uint8_t catN = categoryListIds(catIds, MAX_CATEGORIES);
+  for (uint8_t i = 0; i < catN; i++) {
+    const Category* cat = categoryGet(catIds[i]);
+    if (!cat) continue;
+    bool sel = current && current->categoryId == catIds[i];
+    html += "<option value='" + String(catIds[i]) + "'" + (sel ? " selected" : "") + ">" + String(cat->name) + "</option>";
+  }
+  html += "</select></label>";
+  html += "<label>Or new category <input type='text' name='newCategory' maxlength='" + String(CATEGORY_NAME_LEN - 1) + "' placeholder='e.g. Party'></label>";
+
+  html += "<input type='submit' value='" + String(current ? "Update saved effect" : "Save as new") + "'>";
+  html += "</form>";
+}
+
 // drivesLeds marks this page's poll as a heartbeat that also flashes the
 // physical LEDs on the beat (used only by the mic settings page)
 static void appendVuMeter(String& html, bool drivesLeds) {
@@ -256,8 +304,11 @@ static void handleRoot() {
   }
 
   appendParamsForm(html);
+  appendSaveForm(html);
   appendVuMeter(html, false);
 
+  html += "<a class='link' href='/saved'>Saved Effects</a> ";
+  html += "<a class='link' href='/palettes'>Palettes</a> ";
   html += "<a class='link' href='/mic'>Mic Settings</a> ";
   html += "<a class='link' href='/update'>Firmware Update</a>";
   html += "</body></html>";
@@ -298,10 +349,16 @@ static void handleParams() {
     EffectParams& p = effectParamsFor(active);
     int v;
 
-    if (argInt("count", 1, MAX_PALETTE_COLORS, v)) p.palette.count = v;
-    for (uint8_t i = 0; i < p.palette.count; i++) {
-      String argName = "c" + String(i);
-      if (server.hasArg(argName)) p.palette.colors[i] = hexToColor(server.arg(argName));
+    if (server.hasArg("paletteId")) {
+      String pid = server.arg("paletteId");
+      if (pid == "none") {
+        setEffectPaletteId(active, PALETTE_ID_NONE);
+      } else {
+        int id = pid.toInt();
+        if (id >= 0 && id < 255 && paletteGet((uint8_t)id) != nullptr) {
+          setEffectPaletteId(active, (uint8_t)id);
+        }
+      }
     }
     if (argInt("speed", 1, 100, v)) p.speedPct = v;
     if (argInt("intensity", 1, 100, v)) p.intensity = v;
@@ -445,10 +502,175 @@ static void handleUpdateResult() {
   }
 }
 
+static void handlePalettesPage() {
+  int editId = server.hasArg("edit") ? server.arg("edit").toInt() : -1;
+  const NamedPalette* editing = (editId >= 0 && editId < 255) ? paletteGet((uint8_t)editId) : nullptr;
+
+  String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<title>Palettes</title><style>";
+  html += PAGE_STYLE;
+  html += "</style></head><body><h1>Palettes</h1>";
+
+  uint8_t ids[MAX_PALETTES];
+  uint8_t n = paletteListIds(ids, MAX_PALETTES);
+  for (uint8_t i = 0; i < n; i++) {
+    const NamedPalette* np = paletteGet(ids[i]);
+    if (!np) continue;
+    html += "<div class='row'><div>";
+    html += "<div class='swatches'>";
+    for (uint8_t c = 0; c < np->palette.count; c++) {
+      html += "<span style='background:" + colorToHex(np->palette.colors[c]) + "'></span>";
+    }
+    html += "</div>" + String(np->name) + "</div>";
+    html += "<a class='tbtn' href='/palettes?edit=" + String(ids[i]) + "'>Edit</a>";
+    html += "<form method='POST' action='/palettes/delete' onsubmit=\"return confirm('Delete this palette?')\">";
+    html += "<input type='hidden' name='id' value='" + String(ids[i]) + "'>";
+    html += "<button class='tbtn' type='submit'>Delete</button></form>";
+    html += "</div>";
+  }
+
+  html += "<h2>" + String(editing ? "Edit palette" : "New palette") + "</h2>";
+  html += "<form method='POST' action='/palettes/save'>";
+  if (editing) html += "<input type='hidden' name='id' value='" + String(editId) + "'>";
+  html += "<label>Name <input type='text' name='name' maxlength='" + String(PALETTE_NAME_LEN - 1) + "' value='" + String(editing ? editing->name : "") + "' required></label>";
+
+  uint8_t count = editing ? editing->palette.count : 3;
+  html += "<label>Colors <select name='count'>";
+  for (uint8_t c = 1; c <= MAX_PALETTE_COLORS; c++) {
+    html += "<option value='" + String(c) + "'" + (c == count ? " selected" : "") + ">" + String(c) + "</option>";
+  }
+  html += "</select></label>";
+
+  html += "<label>";
+  for (uint8_t i = 0; i < MAX_PALETTE_COLORS; i++) {
+    CRGB c = (editing && i < editing->palette.count) ? editing->palette.colors[i] : CRGB::Black;
+    html += "<input type='color' name='c" + String(i) + "' value='" + colorToHex(c) + "'>";
+  }
+  html += "</label>";
+
+  html += "<input type='submit' value='" + String(editing ? "Update" : "Create") + "'>";
+  html += "</form>";
+  html += "<a class='link' href='/'>Back</a></body></html>";
+  server.send(200, "text/html", html);
+}
+
+static void handlePalettesSave() {
+  if (server.hasArg("name") && server.arg("name").length() > 0) {
+    Palette pal;
+    int count = server.hasArg("count") ? server.arg("count").toInt() : 3;
+    if (count < 1) count = 1;
+    if (count > MAX_PALETTE_COLORS) count = MAX_PALETTE_COLORS;
+    pal.count = (uint8_t)count;
+    for (uint8_t i = 0; i < MAX_PALETTE_COLORS; i++) {
+      String argName = "c" + String(i);
+      pal.colors[i] = server.hasArg(argName) ? hexToColor(server.arg(argName)) : CRGB::Black;
+    }
+
+    String name = server.arg("name");
+    if (server.hasArg("id")) {
+      paletteUpdate((uint8_t)server.arg("id").toInt(), name.c_str(), pal);
+    } else {
+      paletteCreate(name.c_str(), pal);
+    }
+  }
+  server.sendHeader("Location", "/palettes");
+  server.send(303);
+}
+
+static void handlePalettesDelete() {
+  if (server.hasArg("id")) paletteDelete((uint8_t)server.arg("id").toInt());
+  server.sendHeader("Location", "/palettes");
+  server.send(303);
+}
+
+static void handleSavedPage() {
+  uint8_t activeId = getActivePresetId();
+
+  String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<title>Saved Effects</title><style>";
+  html += PAGE_STYLE;
+  html += "</style></head><body><h1>Saved Effects</h1>";
+
+  uint8_t ids[MAX_EFFECT_PRESETS];
+  uint8_t n = presetListIds(ids, MAX_EFFECT_PRESETS);
+  if (n == 0) html += "<p>No saved effects yet. Configure one on the home page and save it.</p>";
+
+  for (uint8_t i = 0; i < n; i++) {
+    const EffectPreset* pr = presetGet(ids[i]);
+    if (!pr) continue;
+    const Category* cat = (pr->categoryId != CATEGORY_ID_NONE) ? categoryGet(pr->categoryId) : nullptr;
+
+    html += "<div class='row" + String(ids[i] == activeId ? " active" : "") + "'><div>";
+    html += "<strong>" + String(pr->name) + "</strong><br>";
+    html += "<small>" + String(EFFECT_NAMES[pr->effectType]) + (cat ? " &middot; " + String(cat->name) : "") + "</small>";
+    html += "</div>";
+    html += "<a class='tbtn' href='/saved/load?id=" + String(ids[i]) + "'>Activate</a>";
+    html += "<form method='POST' action='/saved/delete' onsubmit=\"return confirm('Delete this saved effect?')\">";
+    html += "<input type='hidden' name='id' value='" + String(ids[i]) + "'>";
+    html += "<button class='tbtn' type='submit'>Delete</button></form>";
+    html += "</div>";
+  }
+
+  html += "<a class='link' href='/'>Back</a></body></html>";
+  server.send(200, "text/html", html);
+}
+
+static void handleSavedLoad() {
+  if (server.hasArg("id")) loadEffectPreset((uint8_t)server.arg("id").toInt());
+  server.sendHeader("Location", "/");
+  server.send(303);
+}
+
+static void handleSavedSave() {
+  EffectId active = getActiveEffect();
+  if (active != EFFECT_OFF && server.hasArg("name") && server.arg("name").length() > 0) {
+    String name = server.arg("name");
+
+    uint8_t categoryId = CATEGORY_ID_NONE;
+    if (server.hasArg("newCategory") && server.arg("newCategory").length() > 0) {
+      categoryId = categoryGetOrCreate(server.arg("newCategory").c_str());
+    } else if (server.hasArg("categoryId") && server.arg("categoryId").length() > 0) {
+      uint8_t cid = (uint8_t)server.arg("categoryId").toInt();
+      if (categoryGet(cid) != nullptr) categoryId = cid;
+    }
+
+    uint8_t paletteId = getEffectPaletteId(active);
+    const EffectParams& params = effectParamsFor(active);
+
+    uint8_t id = PRESET_ID_NONE;
+    if (server.hasArg("id")) {
+      uint8_t existingId = (uint8_t)server.arg("id").toInt();
+      if (presetGet(existingId) != nullptr) {
+        presetUpdate(existingId, name.c_str(), active, paletteId, categoryId, params);
+        id = existingId;
+      }
+    }
+    if (id == PRESET_ID_NONE) {
+      id = presetCreate(name.c_str(), active, paletteId, categoryId, params);
+    }
+    if (id != PRESET_ID_NONE) setActivePresetId(id);
+  }
+  server.sendHeader("Location", "/");
+  server.send(303);
+}
+
+static void handleSavedDelete() {
+  if (server.hasArg("id")) presetDelete((uint8_t)server.arg("id").toInt());
+  server.sendHeader("Location", "/saved");
+  server.send(303);
+}
+
 void webUIInit() {
   server.on("/", handleRoot);
   server.on("/set", handleSet);
   server.on("/params", HTTP_POST, handleParams);
+  server.on("/palettes", HTTP_GET, handlePalettesPage);
+  server.on("/palettes/save", HTTP_POST, handlePalettesSave);
+  server.on("/palettes/delete", HTTP_POST, handlePalettesDelete);
+  server.on("/saved", HTTP_GET, handleSavedPage);
+  server.on("/saved/load", HTTP_GET, handleSavedLoad);
+  server.on("/saved/save", HTTP_POST, handleSavedSave);
+  server.on("/saved/delete", HTTP_POST, handleSavedDelete);
   server.on("/update", HTTP_GET, handleUpdatePage);
   server.on("/update", HTTP_POST, handleUpdateResult, handleUpdateUpload);
   server.on("/audio", HTTP_GET, handleAudio);

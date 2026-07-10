@@ -2,6 +2,8 @@
 #include "Effects.h"
 #include "XLFX.h"
 #include "Rings.h"
+#include "PaletteStore.h"
+#include "EffectPresetStore.h"
 
 const char* const EFFECT_NAMES[EFFECT_COUNT] = {
   "Off",
@@ -27,6 +29,8 @@ const char* const EFFECT_NAMES[EFFECT_COUNT] = {
 };
 
 static EffectId activeEffect = EFFECT_OFF;
+static uint8_t effectPaletteId[EFFECT_COUNT];
+static uint8_t activePresetId = PRESET_ID_NONE;
 
 static EffectParams effectParams[EFFECT_COUNT] = {
   { { {}, 0 }, 50, 100, DIR_FORWARD, 1, 3, 1, 50, 0 },                                          // Off (unused)
@@ -52,8 +56,14 @@ static EffectParams effectParams[EFFECT_COUNT] = {
   { { { CRGB::White, CRGB::Blue }, 2 }, 40, 100, DIR_FORWARD, 2, 3, 1, 50, 0,             1, 0, 1, 0,    0, 0, 0 }, // XL Morph
 };
 
+void effectManagerInit() {
+  for (uint8_t i = 0; i < EFFECT_COUNT; i++) effectPaletteId[i] = PALETTE_ID_NONE;
+  activePresetId = PRESET_ID_NONE;
+}
+
 void setActiveEffect(EffectId id) {
   activeEffect = id;
+  activePresetId = PRESET_ID_NONE;
   if (id == EFFECT_OFF) {
     setAll(CRGB::Black);
     showAll();
@@ -68,7 +78,39 @@ EffectParams& effectParamsFor(EffectId id) {
   return effectParams[id];
 }
 
+uint8_t getEffectPaletteId(EffectId id) { return effectPaletteId[id]; }
+void setEffectPaletteId(EffectId id, uint8_t paletteId) { effectPaletteId[id] = paletteId; }
+
+uint8_t getActivePresetId() { return activePresetId; }
+void setActivePresetId(uint8_t presetId) { activePresetId = presetId; }
+
+bool loadEffectPreset(uint8_t presetId) {
+  const EffectPreset* preset = presetGet(presetId);
+  if (!preset) return false;
+
+  activeEffect = preset->effectType;
+  effectParams[preset->effectType] = preset->params;
+  effectPaletteId[preset->effectType] = preset->paletteId;
+  activePresetId = presetId;
+
+  if (activeEffect == EFFECT_OFF) {
+    setAll(CRGB::Black);
+    showAll();
+  }
+  return true;
+}
+
 void runActiveEffect(uint32_t nowMs) {
+  uint8_t linkedPalette = effectPaletteId[activeEffect];
+  if (linkedPalette != PALETTE_ID_NONE) {
+    const NamedPalette* np = paletteGet(linkedPalette);
+    if (np) {
+      effectParams[activeEffect].palette = np->palette;
+    } else {
+      effectPaletteId[activeEffect] = PALETTE_ID_NONE; // saved palette was deleted
+    }
+  }
+
   const EffectParams& p = effectParams[activeEffect];
   switch (activeEffect) {
     case EFFECT_VERTICAL_SWEEP:   effectVerticalSweep(p, nowMs); break;
