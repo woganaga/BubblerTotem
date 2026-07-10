@@ -61,8 +61,9 @@ sketch at `../BubblerIno`, which is no longer the active codebase.
 - **WiFi** (`WifiSetup.*`): station mode, **off by default** — BLE is the
   primary interface, so the radio only comes on when explicitly enabled
   (toggle lives in the BLE app's Settings tab; the on/off choice persists to
-  LittleFS across reboots). Hardcoded SSID/password/hostname — edit
-  `WifiSetup.cpp` before flashing for a new network.
+  LittleFS across reboots). SSID/password live in `src/Secrets.h` (gitignored
+  — copy `src/Secrets.h.example` to `src/Secrets.h` and fill in your network
+  before building).
 - **OTA updates** (`OTAUpdate.*`): `ArduinoOTA`, password-protected, an
   alternative to the WiFi web UI's Firmware Update page — both require WiFi
   to be turned on first.
@@ -74,6 +75,10 @@ Requires [PlatformIO](https://platformio.org/). This project uses the
 platform instead of the official `espressif32` platform, because it tracks
 arduino-esp32 core 3.x — the official platform is still on core 2.x and
 lacks the `ESP_I2S.h` API the mic driver depends on.
+
+Before the first build, copy `src/Secrets.h.example` to `src/Secrets.h` and
+fill in your WiFi SSID/password (that file is gitignored, so it won't be
+committed).
 
 ```sh
 pio run                 # build
