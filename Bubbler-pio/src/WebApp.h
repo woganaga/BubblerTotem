@@ -43,6 +43,7 @@ input[type=range],input[type=text],select{width:100%;margin-top:0.3em}
 input[type=color]{width:2.2em;height:2.2em;border:none;margin:0.2em;padding:0;background:none}
 input[type=submit],.tbtn{min-height:40px;padding:0.6em 1.2em;border-radius:8px;background:#333;color:#fff;border:none;font-size:0.95em;cursor:pointer;font-family:inherit}
 input[type=submit]{width:100%;margin-top:0.6em;background:#4caf50}
+.tbtn.active{background:#4caf50}
 .link{color:#8cf;text-decoration:none;display:inline-block;margin:0.3em 0}
 #vu{width:100%;height:20px;background:#262626;border-radius:4px;margin:0.6em 0;overflow:hidden}
 #vuBar{height:100%;width:0%;background:#4caf50}
@@ -68,7 +69,7 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
 <div id='statusbar'><span id='sbDot'></span><span id='sbEffect'>--</span><span id='sbBpm'></span></div>
 <div id='content'></div>
 <nav id='tabbar'>
-<button data-tab='mode'><span class='ic'>&#127899;</span>Mode</button>
+<button data-tab='main'><span class='ic'>&#127899;</span>Main</button>
 <button data-tab='effects'><span class='ic'>&#10024;</span>Effects</button>
 <button data-tab='saved'><span class='ic'>&#11088;</span>Saved</button>
 <button data-tab='palettes'><span class='ic'>&#127912;</span>Palettes</button>

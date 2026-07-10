@@ -44,12 +44,16 @@ static bool argInt(const char* name, int min, int max, int& out) {
 
 // ---- fragments (rendered server-side, injected into #content by the app shell) ----
 
-static void renderModeFragment(String& html) {
-  html += "<h1>Mode</h1>";
-  html += "<div class='stub'>Category-based show mode and an audio-reactive "
-          "toggle are coming soon here. For now, use the Effects tab to run "
-          "and tweak one effect at a time, or Saved Effects to jump between "
-          "presets.</div>";
+static void renderMainFragment(String& html) {
+  html += "<h1>Main</h1>";
+  bool beatSync = getBeatSyncEnabled();
+  html += "<div class='row'><div>Beat Sync</div>";
+  html += "<button class='tbtn" + String(beatSync ? " active" : "") + "' data-action='/action/beatsync?enabled=" + String(beatSync ? 0 : 1) + "'>";
+  html += beatSync ? "On" : "Off";
+  html += "</button></div>";
+  html += "<div class='stub'>When on, the running effect restarts at every "
+          "detected beat, syncing its animation to the tempo. Category-based "
+          "show mode is coming soon here.</div>";
 }
 
 static void renderEffectParamsForm(String& html) {
@@ -296,9 +300,9 @@ static void handleRoot() {
   server.send(200, "text/html", SHELL_HTML);
 }
 
-static void handleFragmentMode() {
+static void handleFragmentMain() {
   String html;
-  renderModeFragment(html);
+  renderMainFragment(html);
   server.send(200, "text/html", html);
 }
 
@@ -349,8 +353,16 @@ static void handleApiStatus() {
   json += ",\"treble\":" + String(f.treble, 3);
   json += ",\"bpm\":" + String((int)(f.bpm + 0.5f));
   json += ",\"conf\":" + String(f.confidence, 2);
+  json += ",\"beatSync\":" + String(getBeatSyncEnabled() ? "true" : "false");
   json += "}";
   server.send(200, "application/json", json);
+}
+
+// ---- main/beat-sync actions ----
+
+static void handleBeatSyncAction() {
+  setBeatSyncEnabled(server.hasArg("enabled") ? server.arg("enabled").toInt() != 0 : true);
+  server.send(204);
 }
 
 // ---- effect actions ----
@@ -537,13 +549,15 @@ static void handleUpdateResult() {
 void webUIInit() {
   server.on("/", HTTP_GET, handleRoot);
 
-  server.on("/fragment/mode", HTTP_GET, handleFragmentMode);
+  server.on("/fragment/main", HTTP_GET, handleFragmentMain);
   server.on("/fragment/effects", HTTP_GET, handleFragmentEffects);
   server.on("/fragment/saved", HTTP_GET, handleFragmentSaved);
   server.on("/fragment/palettes", HTTP_GET, handleFragmentPalettes);
   server.on("/fragment/settings", HTTP_GET, handleFragmentSettings);
 
   server.on("/api/status", HTTP_GET, handleApiStatus);
+
+  server.on("/action/beatsync", HTTP_POST, handleBeatSyncAction);
 
   server.on("/action/effect/activate", HTTP_POST, handleEffectActivate);
   server.on("/action/effect/params", HTTP_POST, handleEffectParamsAction);

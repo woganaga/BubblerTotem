@@ -33,7 +33,13 @@ sketch at `../BubblerIno`, which is no longer the active codebase.
   a 512-sample Hann-windowed FFT over the mic input, publishing a lock-free
   `AudioFeatures` snapshot — bass/mid/treble energy, smoothed volume, beat
   detection, and a BPM estimate (autocorrelation of the onset envelope + a
-  PLL beat clock) with tap-tempo and ×2/÷2 override.
+  PLL beat clock) with tap-tempo and ×2/÷2 override. **Beat Sync** (toggle on
+  the Main tab; `setBeatSyncEnabled()`/`getBeatSyncEnabled()` in
+  `EffectManager.*`) re-anchors the running effect's timeline to 0 at every
+  detected beat onset instead of feeding it raw elapsed time, so it restarts
+  and repeats in time with the tempo — no per-effect changes needed, since
+  every effect already treats its time argument as "elapsed since some start
+  point."
 - **Named palettes & saved effect presets** (`PaletteStore.*`,
   `CategoryStore.*`, `EffectPresetStore.*`): color palettes are created,
   edited, and deleted independently of any one effect, then *linked* to
@@ -54,7 +60,7 @@ sketch at `../BubblerIno`, which is no longer the active codebase.
   [Bluefy](https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055)
   or WebBLE instead; desktop/Android Chrome and Edge work directly.
 - **Web UI over WiFi** (`WebUI.*`, `WebApp.*`), a secondary interface served
-  on port 80 once WiFi is on — a single-page app with the same Mode/Effects/
+  on port 80 once WiFi is on — a single-page app with the same Main/Effects/
   Saved/Palettes/Settings sections as the BLE app, plus a **Firmware Update**
   page under Settings that only shows up here (not over BLE, since pushing a
   multi-hundred-KB binary over BLE characteristics isn't practical).

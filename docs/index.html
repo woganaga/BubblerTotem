@@ -27,6 +27,7 @@ input[type=range],input[type=text],select{width:100%;margin-top:0.3em}
 input[type=color]{width:2.2em;height:2.2em;border:none;margin:0.2em;padding:0;background:none}
 input[type=submit],.tbtn{min-height:40px;padding:0.6em 1.2em;border-radius:8px;background:#333;color:#fff;border:none;font-size:0.95em;cursor:pointer;font-family:inherit}
 input[type=submit]{width:100%;margin-top:0.6em;background:#4caf50}
+.tbtn.active{background:#4caf50}
 .link{color:#8cf;text-decoration:none;display:inline-block;margin:0.3em 0}
 #vu{width:100%;height:20px;background:#262626;border-radius:4px;margin:0.6em 0;overflow:hidden}
 #vuBar{height:100%;width:0%;background:#4caf50}
@@ -97,7 +98,7 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
   <div id='statusbar'><span id='sbDot'></span><span id='sbEffect'>--</span><span id='sbBpm'></span></div>
   <div id='content'></div>
   <nav id='tabbar'>
-    <button data-tab='mode'><span class='ic'>&#127899;</span>Mode</button>
+    <button data-tab='main'><span class='ic'>&#127899;</span>Main</button>
     <button data-tab='effects'><span class='ic'>&#10024;</span>Effects</button>
     <button data-tab='saved'><span class='ic'>&#11088;</span>Saved</button>
     <button data-tab='palettes'><span class='ic'>&#127912;</span>Palettes</button>
@@ -423,10 +424,14 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
 
   // ---- render functions (build markup from `state`; mirrors WebUI.cpp's fragments) ----
 
-  function renderMode() {
-    return "<h1>Mode</h1><div class='stub'>Category-based show mode and an audio-reactive " +
-      "toggle are coming soon here. For now, use the Effects tab to run and tweak one effect " +
-      "at a time, or Saved Effects to jump between presets.</div>";
+  function renderMain() {
+    var beatSync = !!(state.status && state.status.beatSync);
+    var html = "<h1>Main</h1>";
+    html += "<div class='row'><div>Beat Sync</div>";
+    html += "<button class='tbtn" + (beatSync ? " active" : "") + "' data-toggle-beatsync='" + (beatSync ? 0 : 1) + "'>" + (beatSync ? "On" : "Off") + "</button></div>";
+    html += "<div class='stub'>When on, the running effect restarts at every detected beat, " +
+      "syncing its animation to the tempo. Category-based show mode is coming soon here.</div>";
+    return html;
   }
 
   function renderEffectParamsForm() {
@@ -575,7 +580,7 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
   }
 
   function render(tab) {
-    var fn = { mode: renderMode, effects: renderEffects, saved: renderSaved, palettes: renderPalettes, settings: renderSettings }[tab];
+    var fn = { main: renderMain, effects: renderEffects, saved: renderSaved, palettes: renderPalettes, settings: renderSettings }[tab];
     qs('#content').innerHTML = fn ? fn() : '';
     wireContent();
   }
@@ -671,6 +676,12 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
     qsa('[data-toggle-wifi]', content).forEach(function (el) {
       el.addEventListener('click', function () {
         link.send('setWifi', { enabled: el.dataset.toggleWifi }).then(function (w) { state.wifi = w; render('settings'); }).catch(showError);
+      });
+    });
+
+    qsa('[data-toggle-beatsync]', content).forEach(function (el) {
+      el.addEventListener('click', function () {
+        link.send('setBeatSync', { enabled: el.dataset.toggleBeatsync }).then(function (st) { state.status = st; render('main'); }).catch(showError);
       });
     });
 

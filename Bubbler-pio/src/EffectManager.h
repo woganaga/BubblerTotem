@@ -60,3 +60,11 @@ bool loadEffectPreset(uint8_t presetId);
 // ever saving one)
 uint8_t getActivePresetId();
 void setActivePresetId(uint8_t presetId);
+
+// When on, runActiveEffect() re-anchors every effect's timeline to 0 at each
+// detected beat onset (instead of feeding it raw elapsed time), so whatever
+// effect is running restarts in sync with the beat and repeats at the
+// detected tempo - no changes needed to individual effects, since they
+// already treat their nowMs argument as "time since some start point".
+void setBeatSyncEnabled(bool enabled);
+bool getBeatSyncEnabled();

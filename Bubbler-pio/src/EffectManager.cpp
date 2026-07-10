@@ -4,6 +4,7 @@
 #include "Rings.h"
 #include "PaletteStore.h"
 #include "EffectPresetStore.h"
+#include "AudioInput.h"
 
 const char* const EFFECT_NAMES[EFFECT_COUNT] = {
   "Off",
@@ -31,6 +32,10 @@ const char* const EFFECT_NAMES[EFFECT_COUNT] = {
 static EffectId activeEffect = EFFECT_OFF;
 static uint8_t effectPaletteId[EFFECT_COUNT];
 static uint8_t activePresetId = PRESET_ID_NONE;
+
+static bool beatSyncEnabled = false;
+static uint32_t beatSyncAnchorMs = 0; // nowMs at the most recent detected beat onset
+static bool beatSyncWasActive = false; // for edge-detecting audioBeatActive()'s ~120ms-long pulse
 
 static EffectParams effectParams[EFFECT_COUNT] = {
   { { {}, 0 }, 50, 100, DIR_FORWARD, 1, 3, 1, 50, 0 },                                          // Off (unused)
@@ -84,6 +89,9 @@ void setEffectPaletteId(EffectId id, uint8_t paletteId) { effectPaletteId[id] = 
 uint8_t getActivePresetId() { return activePresetId; }
 void setActivePresetId(uint8_t presetId) { activePresetId = presetId; }
 
+void setBeatSyncEnabled(bool enabled) { beatSyncEnabled = enabled; }
+bool getBeatSyncEnabled() { return beatSyncEnabled; }
+
 bool loadEffectPreset(uint8_t presetId) {
   const EffectPreset* preset = presetGet(presetId);
   if (!preset) return false;
@@ -111,27 +119,39 @@ void runActiveEffect(uint32_t nowMs) {
     }
   }
 
+  uint32_t effectNowMs = nowMs;
+  if (beatSyncEnabled) {
+    // audioBeatActive() stays true for a ~120ms flash after each onset, so
+    // only re-anchor on its rising edge - otherwise every one of the many
+    // loop() calls during that window would reset the anchor to "now",
+    // instead of to the moment the beat actually started.
+    bool beatNow = audioBeatActive();
+    if (beatNow && !beatSyncWasActive) beatSyncAnchorMs = nowMs;
+    beatSyncWasActive = beatNow;
+    effectNowMs = nowMs - beatSyncAnchorMs; // elapsed time since the most recent beat onset
+  }
+
   const EffectParams& p = effectParams[activeEffect];
   switch (activeEffect) {
-    case EFFECT_VERTICAL_SWEEP:   effectVerticalSweep(p, nowMs); break;
-    case EFFECT_HORIZONTAL_SWEEP: effectHorizontalSweep(p, nowMs); break;
-    case EFFECT_ALTERNATE_FLASH:  effectAlternateFlash(p, nowMs); break;
-    case EFFECT_CHASE:            effectChase(p, nowMs); break;
-    case EFFECT_SPIRAL:           effectSpiral(p, nowMs); break;
-    case EFFECT_SNOW:             effectSnow(p, nowMs); break;
-    case EFFECT_PINWHEEL:         effectPinwheel(p, nowMs); break;
-    case EFFECT_COLORWASH:        effectColorwash(p, nowMs); break;
-    case EFFECT_FIRE:             effectFire(p, nowMs); break;
-    case EFFECT_CONFETTI:         effectConfetti(p, nowMs); break;
-    case EFFECT_RIPPLE:           effectRipple(p, nowMs); break;
-    case EFFECT_XL_BARS:          xlBars(p, nowMs); break;
-    case EFFECT_XL_COLORWASH:     xlColorWash(p, nowMs); break;
-    case EFFECT_XL_SPIRALS:       xlSpirals(p, nowMs); break;
-    case EFFECT_XL_PINWHEEL:      xlPinwheel(p, nowMs); break;
-    case EFFECT_XL_BUTTERFLY:     xlButterfly(p, nowMs); break;
-    case EFFECT_XL_PLASMA:        xlPlasma(p, nowMs); break;
-    case EFFECT_XL_SINGLESTRAND:  xlSingleStrand(p, nowMs); break;
-    case EFFECT_XL_MORPH:         xlMorph(p, nowMs); break;
+    case EFFECT_VERTICAL_SWEEP:   effectVerticalSweep(p, effectNowMs); break;
+    case EFFECT_HORIZONTAL_SWEEP: effectHorizontalSweep(p, effectNowMs); break;
+    case EFFECT_ALTERNATE_FLASH:  effectAlternateFlash(p, effectNowMs); break;
+    case EFFECT_CHASE:            effectChase(p, effectNowMs); break;
+    case EFFECT_SPIRAL:           effectSpiral(p, effectNowMs); break;
+    case EFFECT_SNOW:             effectSnow(p, effectNowMs); break;
+    case EFFECT_PINWHEEL:         effectPinwheel(p, effectNowMs); break;
+    case EFFECT_COLORWASH:        effectColorwash(p, effectNowMs); break;
+    case EFFECT_FIRE:             effectFire(p, effectNowMs); break;
+    case EFFECT_CONFETTI:         effectConfetti(p, effectNowMs); break;
+    case EFFECT_RIPPLE:           effectRipple(p, effectNowMs); break;
+    case EFFECT_XL_BARS:          xlBars(p, effectNowMs); break;
+    case EFFECT_XL_COLORWASH:     xlColorWash(p, effectNowMs); break;
+    case EFFECT_XL_SPIRALS:       xlSpirals(p, effectNowMs); break;
+    case EFFECT_XL_PINWHEEL:      xlPinwheel(p, effectNowMs); break;
+    case EFFECT_XL_BUTTERFLY:     xlButterfly(p, effectNowMs); break;
+    case EFFECT_XL_PLASMA:        xlPlasma(p, effectNowMs); break;
+    case EFFECT_XL_SINGLESTRAND:  xlSingleStrand(p, effectNowMs); break;
+    case EFFECT_XL_MORPH:         xlMorph(p, effectNowMs); break;
     case EFFECT_OFF:
     default:
       return; // already blacked out by setActiveEffect

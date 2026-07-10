@@ -276,6 +276,7 @@ static String jsonStatus() {
   j += ",\"conf\":" + String(f.confidence, 2);
   j += ",\"wifiEnabled\":" + String(wifiIsEnabled() ? "true" : "false");
   j += ",\"wifiConnected\":" + String(wifiIsConnected() ? "true" : "false");
+  j += ",\"beatSync\":" + String(getBeatSyncEnabled() ? "true" : "false");
   j += "}";
   return j;
 }
@@ -553,6 +554,11 @@ static String handleCommand(const String& raw) {
   if (op == "setWifi") {
     wifiSetEnabled(p.getInt("enabled", 0) != 0);
     return jsonWifi();
+  }
+
+  if (op == "setBeatSync") {
+    setBeatSyncEnabled(p.getInt("enabled", 0) != 0);
+    return jsonStatus();
   }
 
   return jsonErr("unknown op");
