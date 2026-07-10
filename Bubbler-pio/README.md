@@ -81,11 +81,21 @@ fill in your WiFi SSID/password (that file is gitignored, so it won't be
 committed).
 
 ```sh
-pio run                 # build
+pio run                 # build (default env: esp32-s3-devkitc-1-debug)
 pio run -t upload       # build + flash over USB
 pio run -t uploadfs     # push the LittleFS filesystem (mic settings, etc.)
 pio device monitor      # serial monitor
 ```
+
+There are three environments (`platformio.ini`):
+- **`esp32-s3-devkitc-1-debug`** — the current default (`pio run` with no
+  `-e` builds this). Same as the plain env, plus verbose BLE wire-protocol
+  tracing (every chunk/ack/command) to the Serial monitor, gated behind
+  `BUBBLER_BLE_DEBUG` (see `BLE_LOG` in `BleServer.cpp`).
+- **`esp32-s3-devkitc-1`** — the quiet build, no BLE tracing. Once BLE is
+  solid, build this explicitly (`pio run -e esp32-s3-devkitc-1 -t upload`),
+  or flip `default_envs` in `platformio.ini` back to it.
+- **`esp32-s3-devkitc-1-ota`** — OTA upload variant (extends the plain env).
 
 Once the device is on the network, subsequent updates can go over OTA
 (`espota`) or the WiFi web UI's Firmware Update page instead of USB. WiFi

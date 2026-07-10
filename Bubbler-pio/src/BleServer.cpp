@@ -12,6 +12,19 @@
 
 #define BLE_DEVICE_NAME "BubblerTotem"
 
+// Verbose BLE wire-protocol tracing (every chunk/ack/command). Only compiled
+// in for the "-debug" PlatformIO environment (see platformio.ini, which
+// defines BUBBLER_BLE_DEBUG there). Zero-cost when off: since BLE_LOG expands
+// to a statement that never references its arguments, the argument
+// expressions themselves (string building, etc.) aren't compiled in either,
+// not just silenced at runtime. Switch to the plain (non "-debug") env once
+// BLE is confirmed working reliably.
+#ifdef BUBBLER_BLE_DEBUG
+  #define BLE_LOG(...) Serial.printf(__VA_ARGS__)
+#else
+  #define BLE_LOG(...) do {} while (0)
+#endif
+
 // Custom 128-bit UUIDs (not a standardized service - just distinct/unlikely
 // to collide). Must match docs/index.html exactly.
 static const char* SERVICE_UUID = "7a5a1000-0002-4b70-8f1a-9d6e9c9a2b10";
@@ -152,14 +165,14 @@ static void sendNextChunk() {
   txChar->setValue(buf, chunkLen + 3);
   bool acked = txChar->indicate();
 
-  Serial.printf("BLE TX: reqId=%u chunk seq=%u offset=%u len=%u more=%d gattAck=%d\n",
+  BLE_LOG("BLE TX: reqId=%u chunk seq=%u offset=%u len=%u more=%d gattAck=%d\n",
     pendingReqId, pendingSeq, (unsigned)pendingOffset, (unsigned)chunkLen, more ? 1 : 0, acked ? 1 : 0);
 
   pendingOffset += chunkLen;
   pendingSeq++;
   if (!more) {
     pendingActive = false;
-    Serial.printf("BLE TX: reqId=%u response fully sent (%u bytes, %u chunks)\n",
+    BLE_LOG("BLE TX: reqId=%u response fully sent (%u bytes, %u chunks)\n",
       pendingReqId, (unsigned)len, pendingSeq);
   }
   // else: wait for the client's "ack" command (see onWrite) before sending the next chunk
@@ -171,7 +184,7 @@ static void startResponse(const String& payload, uint8_t reqId) {
   pendingReqId = reqId;
   pendingSeq = 0;
   pendingActive = true;
-  Serial.printf("BLE TX: reqId=%u starting response, %u bytes, chunk size %u\n",
+  BLE_LOG("BLE TX: reqId=%u starting response, %u bytes, chunk size %u\n",
     reqId, (unsigned)payload.length(), (unsigned)bleChunkSize);
   sendNextChunk();
 }
@@ -524,7 +537,7 @@ class RxCallbacks : public NimBLECharacteristicCallbacks {
     // sides show up in one place (this Serial monitor) instead of needing
     // to copy text off a phone. No response is sent for this op.
     if (op == "clientLog") {
-      Serial.printf("JS: %s\n", p.get("msg").c_str());
+      BLE_LOG("JS: %s\n", p.get("msg").c_str());
       return;
     }
 
@@ -537,16 +550,16 @@ class RxCallbacks : public NimBLECharacteristicCallbacks {
       if (pendingActive && ackReqId == pendingReqId && ackSeq == lastSentSeq) {
         sendNextChunk();
       } else {
-        Serial.printf("BLE: ignoring stray/late ack reqId=%u seq=%u (pendingActive=%d pendingReqId=%u lastSentSeq=%u)\n",
+        BLE_LOG("BLE: ignoring stray/late ack reqId=%u seq=%u (pendingActive=%d pendingReqId=%u lastSentSeq=%u)\n",
           ackReqId, ackSeq, pendingActive ? 1 : 0, pendingReqId, lastSentSeq);
       }
       return;
     }
 
     uint8_t reqId = (uint8_t)p.getInt("_id", 0); // client-generated, echoed back in every response chunk
-    Serial.printf("BLE RX: reqId=%u %u bytes: %s\n", reqId, (unsigned)cmd.length(), cmd.c_str());
+    BLE_LOG("BLE RX: reqId=%u %u bytes: %s\n", reqId, (unsigned)cmd.length(), cmd.c_str());
     String response = handleCommand(cmd);
-    Serial.printf("BLE: reqId=%u response ready, %u bytes: %s%s\n", reqId, (unsigned)response.length(),
+    BLE_LOG("BLE: reqId=%u response ready, %u bytes: %s%s\n", reqId, (unsigned)response.length(),
       response.substring(0, 120).c_str(), response.length() > 120 ? "..." : "");
     startResponse(response, reqId);
   }
@@ -554,7 +567,7 @@ class RxCallbacks : public NimBLECharacteristicCallbacks {
 
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* s, NimBLEConnInfo& connInfo) override {
-    Serial.printf("BLE: central connected, handle=%u\n", connInfo.getConnHandle());
+    BLE_LOG("BLE: central connected, handle=%u\n", connInfo.getConnHandle());
     bleChunkSize = MIN_CHUNK_SIZE; // reset to the safe floor until this connection's onMTUChange fires
     // Ask the central for a tighter connection interval (units of 1.25ms:
     // 6-12 -> 7.5-15ms, vs. a default that's often 30-50ms+) and no slave
@@ -564,7 +577,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     s->updateConnParams(connInfo.getConnHandle(), 6, 12, 0, 200);
   }
   void onDisconnect(NimBLEServer* s, NimBLEConnInfo& connInfo, int reason) override {
-    Serial.printf("BLE: central disconnected, reason=%d - resuming advertising\n", reason);
+    BLE_LOG("BLE: central disconnected, reason=%d - resuming advertising\n", reason);
     NimBLEDevice::startAdvertising(); // resume advertising so another central can connect
   }
   void onMTUChange(uint16_t mtu, NimBLEConnInfo& connInfo) override {
@@ -572,7 +585,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     if (usable < MIN_CHUNK_SIZE) usable = MIN_CHUNK_SIZE;
     if (usable > MAX_CHUNK_SIZE) usable = MAX_CHUNK_SIZE;
     bleChunkSize = usable;
-    Serial.printf("BLE: MTU negotiated = %u -> chunk size now %u bytes\n", mtu, (unsigned)bleChunkSize);
+    BLE_LOG("BLE: MTU negotiated = %u -> chunk size now %u bytes\n", mtu, (unsigned)bleChunkSize);
   }
 };
 
@@ -593,5 +606,5 @@ void bleServerInit() {
   advertising->addServiceUUID(SERVICE_UUID);
   advertising->start();
 
-  Serial.printf("BLE: advertising as \"%s\", service %s\n", BLE_DEVICE_NAME, SERVICE_UUID);
+  BLE_LOG("BLE: advertising as \"%s\", service %s\n", BLE_DEVICE_NAME, SERVICE_UUID);
 }
