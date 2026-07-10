@@ -5,7 +5,7 @@
 
 static const char* WIFI_ENABLED_FILE = "/wifi_enabled.bin";
 
-static bool enabled = false;
+static bool enabled = true;
 
 static void loadEnabled() {
   LittleFS.begin(true);

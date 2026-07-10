@@ -88,7 +88,14 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
   var TX_UUID = '7a5a1002-0002-4b70-8f1a-9d6e9c9a2b10'; // notify: JSON responses out
 
   // ---- BLE transport: one command in flight at a time (queued), chunked
-  // JSON responses reassembled from a 1-byte-prefixed notification stream ----
+  // JSON responses reassembled from a request-id + sequence-numbered
+  // indication stream. See BleServer.cpp's sendChunked() for the wire
+  // format (must match exactly): each chunk is
+  // [more:1 byte][reqId:1 byte][seq:1 byte][utf8 data...]. The request id
+  // (generated here, echoed by the firmware) lets a late straggler chunk
+  // from an old/retried request be told apart from a genuinely corrupted
+  // chunk in the current one - the former is silently dropped, the latter
+  // rejects with a clear error. ----
   var BleLink = function () {
     this.device = null;
     this.rxChar = null;
@@ -96,7 +103,10 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
     this.connected = false;
     this.pending = null;
     this.queue = Promise.resolve();
+    this.nextReqId = 0;
   };
+
+  function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
   BleLink.prototype.connect = function () {
     var self = this;
@@ -128,11 +138,37 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
   BleLink.prototype._onNotify = function (e) {
     var value = e.target.value;
     var bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-    if (bytes.length === 0) return;
+    if (bytes.length < 3 || !this.pending) return;
     var more = bytes[0] === 1;
-    var text = new TextDecoder('utf-8').decode(bytes.subarray(1));
-    if (!this.pending) return;
+    var respId = bytes[1];
+    var seq = bytes[2];
+    var text = new TextDecoder('utf-8').decode(bytes.subarray(3));
+
+    if (respId !== this.pending.reqId) {
+      // Stale chunk from a previous/retried request, not corruption of the
+      // one we're currently waiting on - drop it and keep waiting.
+      console.warn('BLE ignoring stale chunk: expected reqId ' + this.pending.reqId + ', got ' + respId +
+        ' (seq ' + seq + ', ' + text.length + ' bytes)');
+      return;
+    }
+
+    if (seq !== this.pending.expectedSeq) {
+      // Same request, but a chunk was skipped/duplicated/reordered -
+      // GATT-level acking only proves the phone's Bluetooth stack got the
+      // chunk, not that the phone's app (e.g. Bluefy's WebView bridge)
+      // relayed it intact. Reject instead of silently concatenating
+      // corrupted data into something JSON.parse chokes on.
+      console.error('BLE chunk out of sequence for op "' + this.pending.op + '" (reqId ' + respId + '): expected seq ' +
+        this.pending.expectedSeq + ', got ' + seq + '. Buffer so far (' +
+        this.pending.buffer.length + ' bytes): ' + this.pending.buffer);
+      var reject = this.pending.reject;
+      this.pending = null;
+      reject(new Error('BLE response corrupted (chunk out of sequence)'));
+      return;
+    }
+
     this.pending.buffer += text;
+    this.pending.expectedSeq = (seq + 1) & 0xff;
     if (!more) {
       var resolve = this.pending.resolve;
       var buf = this.pending.buffer;
@@ -143,16 +179,29 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
 
   BleLink.prototype.send = function (op, params) {
     var self = this;
-    this.queue = this.queue.then(function () { return self._sendNow(op, params); });
+    this.queue = this.queue.then(function () { return self._sendWithRetry(op, params); });
     return this.queue;
+  };
+
+  // one automatic retry on a corrupted/failed response, with a short delay
+  // first so any late straggler chunks from the failed attempt land in a
+  // dead window (pending already cleared) instead of corrupting the retry
+  BleLink.prototype._sendWithRetry = function (op, params) {
+    var self = this;
+    return self._sendNow(op, params).catch(function (err) {
+      console.warn('BLE command "' + op + '" failed (' + err.message + '), retrying once...');
+      return delay(300).then(function () { return self._sendNow(op, params); });
+    });
   };
 
   BleLink.prototype._sendNow = function (op, params) {
     var self = this;
     return new Promise(function (resolve, reject) {
       if (!self.connected) { reject(new Error('Not connected')); return; }
-      self.pending = { resolve: resolve, buffer: '' };
-      var cmd = 'op=' + encodeURIComponent(op);
+      var reqId = self.nextReqId;
+      self.nextReqId = (self.nextReqId + 1) & 0xff;
+      self.pending = { resolve: resolve, reject: reject, buffer: '', expectedSeq: 0, op: op, reqId: reqId };
+      var cmd = 'op=' + encodeURIComponent(op) + '&_id=' + reqId;
       for (var k in (params || {})) {
         if (Object.prototype.hasOwnProperty.call(params, k)) {
           cmd += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
@@ -160,7 +209,14 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
       }
       var enc = new TextEncoder().encode(cmd);
       self.rxChar.writeValue(enc).catch(function (err) { self.pending = null; reject(err); });
-    }).then(function (raw) { return JSON.parse(raw); });
+    }).then(function (raw) {
+      try {
+        return JSON.parse(raw);
+      } catch (err) {
+        console.error('BLE JSON parse failed for op "' + op + '". Raw response (' + raw.length + ' bytes): ' + raw);
+        throw err;
+      }
+    });
   };
 
   var link = new BleLink();

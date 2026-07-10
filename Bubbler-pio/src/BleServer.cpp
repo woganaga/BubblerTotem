@@ -19,14 +19,31 @@ static const char* RX_CHAR_UUID = "7a5a1001-0002-4b70-8f1a-9d6e9c9a2b10"; // wri
 static const char* TX_CHAR_UUID = "7a5a1002-0002-4b70-8f1a-9d6e9c9a2b10"; // notify: JSON responses out
 
 // Responses can be a few KB (e.g. "meta"), well beyond one ATT MTU, so they
-// go out as a sequence of notifications, each prefixed with one byte: 1 if
-// more chunks follow, 0 if this is the last one. The client concatenates
-// the remainder of each chunk until it sees a 0-prefixed one, then
-// JSON.parses the result. 180 bytes comfortably fits inside the MTU most
-// modern BLE centrals (incl. iOS via Bluefy) negotiate, but this is one of
-// the few things here that really needs a live phone+device to confirm -
-// shrink BLE_CHUNK_SIZE if responses arrive truncated/garbled in practice.
-static const size_t BLE_CHUNK_SIZE = 180;
+// go out as a sequence of GATT indications (not notifications - indications
+// require the peer to ack each one before the next can be sent, which is
+// what makes multi-chunk delivery *at the radio layer* reliable; plain
+// notifications have no flow control and a chunk can silently drop). Each
+// chunk is prefixed with three bytes: [0]=more (1 if more chunks follow, 0
+// if last), [1]=request id (echoed from the command's "_id" param), [2]=
+// chunk sequence number within this response (wraps at 256). Two earlier,
+// weaker designs are why this has both a request id AND a sequence number:
+// GATT-level acking only proves the phone's Bluetooth stack got a chunk, not
+// that the phone's *app* (e.g. Bluefy's bridge into its WebView) relayed it
+// to the page intact - a sequence number alone catches a gap/repeat/reorder
+// *within* one response, but a late straggler chunk from a *previous*
+// request (a retry, a fast poll) can still land during a new one and
+// coincidentally match its expected sequence number. The request id lets the
+// client tell "stale chunk from an old request" (silently ignored) apart
+// from "corrupted chunk in the current request" (rejected with a clear
+// error) instead of silently concatenating either into bad JSON.
+//
+// 19 data bytes (+ 3 header bytes = 22) is deliberately conservative: it's
+// close to the largest payload that reliably fits in an ATT PDU even at the
+// default, un-negotiated minimum MTU (23 bytes total / 20 usable), so this
+// can't be truncated regardless of what MTU the central actually negotiates
+// or when. Once this is confirmed reliable on real hardware, this can
+// likely be raised (e.g. ~180) for fewer round trips.
+static const size_t BLE_CHUNK_SIZE = 19;
 
 static NimBLECharacteristic* txChar = nullptr;
 
@@ -102,29 +119,43 @@ static bool argInt(const BleParams& p, const char* name, int lo, int hi, int& ou
   return true;
 }
 
-static void sendChunked(const String& payload) {
+static void sendChunked(const String& payload, uint8_t reqId) {
   if (!txChar) return;
   size_t len = payload.length();
   size_t offset = 0;
-  uint8_t buf[BLE_CHUNK_SIZE + 1];
+  uint8_t buf[BLE_CHUNK_SIZE + 3];
+  uint8_t seq = 0;
+  uint32_t startMs = millis();
+
+  Serial.printf("BLE TX: reqId=%u %u bytes total, chunk size %u -> ~%u chunks\n",
+    reqId, (unsigned)len, (unsigned)BLE_CHUNK_SIZE, (unsigned)((len + BLE_CHUNK_SIZE - 1) / BLE_CHUNK_SIZE));
 
   do {
     size_t remaining = len - offset;
     size_t chunkLen = remaining > BLE_CHUNK_SIZE ? BLE_CHUNK_SIZE : remaining;
     bool more = (offset + chunkLen) < len;
     buf[0] = more ? 1 : 0;
-    memcpy(buf + 1, payload.c_str() + offset, chunkLen);
-    txChar->setValue(buf, chunkLen + 1);
-    txChar->notify();
+    buf[1] = reqId;
+    buf[2] = seq;
+    memcpy(buf + 3, payload.c_str() + offset, chunkLen);
+    txChar->setValue(buf, chunkLen + 3);
+    bool acked = txChar->indicate();
+    Serial.printf("BLE TX: reqId=%u chunk seq=%u offset=%u len=%u more=%d acked=%d\n",
+      reqId, seq, (unsigned)offset, (unsigned)chunkLen, more ? 1 : 0, acked ? 1 : 0);
+    if (!acked) {
+      Serial.println("BLE TX: indicate() failed (peer didn't ack - disconnected/timed out?), aborting response");
+      return; // stop rather than send more into the void; response is incomplete on the client
+    }
     offset += chunkLen;
-    delay(3); // give the stack/central a moment between notifications
+    seq++;
   } while (offset < len);
 
   if (len == 0) {
-    uint8_t zero = 0;
-    txChar->setValue(&zero, 1);
-    txChar->notify();
+    uint8_t buf0[3] = { 0, reqId, 0 };
+    txChar->setValue(buf0, 3);
+    txChar->indicate();
   }
+  Serial.printf("BLE TX: reqId=%u done, %u chunks in %lums\n", reqId, seq, (unsigned long)(millis() - startMs));
 }
 
 // ---- JSON builders (mirror the shapes WebUI.cpp already sends over HTTP) ----
@@ -468,13 +499,26 @@ static String handleCommand(const String& raw) {
 class RxCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
     String cmd(c->getValue().c_str());
-    sendChunked(handleCommand(cmd));
+    BleParams p(cmd);
+    uint8_t reqId = (uint8_t)p.getInt("_id", 0); // client-generated, echoed back in every response chunk
+    Serial.printf("BLE RX: reqId=%u %u bytes: %s\n", reqId, (unsigned)cmd.length(), cmd.c_str());
+    String response = handleCommand(cmd);
+    Serial.printf("BLE: reqId=%u response ready, %u bytes: %s%s\n", reqId, (unsigned)response.length(),
+      response.substring(0, 120).c_str(), response.length() > 120 ? "..." : "");
+    sendChunked(response, reqId);
   }
 };
 
 class ServerCallbacks : public NimBLEServerCallbacks {
+  void onConnect(NimBLEServer* s, NimBLEConnInfo& connInfo) override {
+    Serial.printf("BLE: central connected, handle=%u\n", connInfo.getConnHandle());
+  }
   void onDisconnect(NimBLEServer* s, NimBLEConnInfo& connInfo, int reason) override {
+    Serial.printf("BLE: central disconnected, reason=%d - resuming advertising\n", reason);
     NimBLEDevice::startAdvertising(); // resume advertising so another central can connect
+  }
+  void onMTUChange(uint16_t mtu, NimBLEConnInfo& connInfo) override {
+    Serial.printf("BLE: MTU negotiated = %u (usable payload ~%u bytes)\n", mtu, mtu > 3 ? mtu - 3 : 0);
   }
 };
 
@@ -486,7 +530,7 @@ void bleServerInit() {
   server->setCallbacks(new ServerCallbacks());
 
   NimBLEService* service = server->createService(SERVICE_UUID);
-  txChar = service->createCharacteristic(TX_CHAR_UUID, NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ);
+  txChar = service->createCharacteristic(TX_CHAR_UUID, NIMBLE_PROPERTY::INDICATE | NIMBLE_PROPERTY::READ);
   NimBLECharacteristic* rxChar = service->createCharacteristic(RX_CHAR_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
   rxChar->setCallbacks(new RxCallbacks());
   server->start(); // starts all of this server's services (service->start() is deprecated/a no-op now)
@@ -494,4 +538,6 @@ void bleServerInit() {
   NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
   advertising->addServiceUUID(SERVICE_UUID);
   advertising->start();
+
+  Serial.printf("BLE: advertising as \"%s\", service %s\n", BLE_DEVICE_NAME, SERVICE_UUID);
 }

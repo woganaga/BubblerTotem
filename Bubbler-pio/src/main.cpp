@@ -12,6 +12,10 @@
 #include "AudioInput.h"
 
 void setup() {
+  Serial.begin(115200);
+  delay(200); // let the USB-serial connection settle before the first print
+  Serial.println("\nBubblerTotem booting...");
+
   paletteStoreInit();
   categoryStoreInit();
   presetStoreInit();
