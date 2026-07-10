@@ -1,6 +1,7 @@
 #include "WebUI.h"
 #include <WebServer.h>
 #include <Update.h>
+#include <LittleFS.h>
 #include "EffectManager.h"
 #include "AudioInput.h"
 #include "PaletteStore.h"
@@ -286,6 +287,13 @@ static void renderSettingsFragment(String& html) {
   html += "<input type='submit' value='Apply (save to flash)'>";
   html += "</form>";
 
+  html += "<h2>Mic Recording</h2>";
+  html += "<div class='stub' style='padding:0.5em 0;text-align:left'>Records 10 seconds of raw mic "
+          "audio to a .wav file, so you can listen back and judge how noisy the mic/preamp is.</div>";
+  html += "<button class='tbtn' data-action='/action/mic/record'>Record 10 seconds</button>";
+  html += "<div id='micRecordStatus'></div>";
+  html += "<a id='micRecordLink' class='link' href='" MIC_RECORDING_PATH "' download style='display:none'>Download recording (.wav)</a>";
+
   html += "<h2>Firmware Update</h2>";
   html += "<form id='updateForm' method='POST' action='/action/update' enctype='multipart/form-data'>";
   html += "<input type='file' name='firmware' accept='.bin'>";
@@ -354,6 +362,9 @@ static void handleApiStatus() {
   json += ",\"bpm\":" + String((int)(f.bpm + 0.5f));
   json += ",\"conf\":" + String(f.confidence, 2);
   json += ",\"beatSync\":" + String(getBeatSyncEnabled() ? "true" : "false");
+  json += ",\"micRecording\":" + String(micRecordInProgress() ? "true" : "false");
+  json += ",\"micRecordProgress\":" + String(micRecordProgress(), 2);
+  json += ",\"micRecordReady\":" + String(micRecordReady() ? "true" : "false");
   json += "}";
   server.send(200, "application/json", json);
 }
@@ -524,6 +535,22 @@ static void handleMicNudgeAction() {
   server.send(204);
 }
 
+// ---- mic recording ----
+
+static void handleMicRecordAction() {
+  micRecordStart();
+  server.send(204);
+}
+
+static void handleMicRecordingDownload() {
+  if (!micRecordReady()) { server.send(404, "text/plain", "No recording available yet"); return; }
+  File f = LittleFS.open(MIC_RECORDING_PATH, "r");
+  if (!f) { server.send(404, "text/plain", "No recording available yet"); return; }
+  server.sendHeader("Content-Disposition", "attachment; filename=\"mic_recording.wav\"");
+  server.streamFile(f, "audio/wav");
+  f.close();
+}
+
 // ---- firmware update ----
 
 static void handleUpdateUpload() {
@@ -573,6 +600,8 @@ void webUIInit() {
   server.on("/action/mic/save", HTTP_POST, handleMicSaveAction);
   server.on("/action/mic/tap", HTTP_POST, handleMicTapAction);
   server.on("/action/mic/nudge", HTTP_POST, handleMicNudgeAction);
+  server.on("/action/mic/record", HTTP_POST, handleMicRecordAction);
+  server.on(MIC_RECORDING_PATH, HTTP_GET, handleMicRecordingDownload);
 
   server.on("/action/update", HTTP_POST, handleUpdateResult, handleUpdateUpload);
 

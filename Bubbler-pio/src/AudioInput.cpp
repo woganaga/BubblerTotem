@@ -47,6 +47,58 @@ static AudioSettings settings = { 50, 10, 150, 150 };
 
 AudioSettings& audioSettings() { return settings; }
 
+// --- mic noise-check recording (raw WAV to LittleFS) ------------------------
+
+static const uint32_t MIC_RECORD_SECONDS = 10;
+static const uint32_t MIC_RECORD_TOTAL_SAMPLES = SAMPLE_RATE * MIC_RECORD_SECONDS;
+
+static File micRecordFile;
+static volatile bool micRecording = false;
+static uint32_t micRecordSamplesWritten = 0;
+static bool micRecordFileReady = false;
+
+static void writeU32LE(uint8_t* buf, uint32_t v) {
+  buf[0] = v & 0xFF; buf[1] = (v >> 8) & 0xFF; buf[2] = (v >> 16) & 0xFF; buf[3] = (v >> 24) & 0xFF;
+}
+static void writeU16LE(uint8_t* buf, uint16_t v) {
+  buf[0] = v & 0xFF; buf[1] = (v >> 8) & 0xFF;
+}
+
+// standard 44-byte PCM WAV header; dataSize is known upfront since the
+// recording length is fixed, so no need to patch it in after the fact
+static void writeWavHeader(File& f, uint32_t sampleRate, uint16_t bitsPerSample, uint32_t dataSize) {
+  uint8_t h[44];
+  memcpy(h, "RIFF", 4);
+  writeU32LE(h + 4, 36 + dataSize);
+  memcpy(h + 8, "WAVE", 4);
+  memcpy(h + 12, "fmt ", 4);
+  writeU32LE(h + 16, 16); // PCM fmt chunk size
+  writeU16LE(h + 20, 1);  // AudioFormat = PCM
+  writeU16LE(h + 22, 1);  // NumChannels = mono
+  writeU32LE(h + 24, sampleRate);
+  writeU32LE(h + 28, sampleRate * (uint32_t)(bitsPerSample / 8)); // ByteRate
+  writeU16LE(h + 32, bitsPerSample / 8);                          // BlockAlign
+  writeU16LE(h + 34, bitsPerSample);
+  memcpy(h + 36, "data", 4);
+  writeU32LE(h + 40, dataSize);
+  f.write(h, sizeof(h));
+}
+
+void micRecordStart() {
+  if (micRecording) return;
+  File f = LittleFS.open(MIC_RECORDING_PATH, "w");
+  if (!f) return;
+  writeWavHeader(f, SAMPLE_RATE, 16, MIC_RECORD_TOTAL_SAMPLES * 2);
+  micRecordFile = f;
+  micRecordSamplesWritten = 0;
+  micRecordFileReady = false;
+  micRecording = true;
+}
+
+bool micRecordInProgress() { return micRecording; }
+float micRecordProgress() { return micRecording ? (float)micRecordSamplesWritten / (float)MIC_RECORD_TOTAL_SAMPLES : 0.0f; }
+bool micRecordReady() { return micRecordFileReady; }
+
 void audioSaveSettings() {
   File f = LittleFS.open(SETTINGS_FILE, "w");
   if (!f) return;
@@ -233,10 +285,32 @@ static void processFrame(uint32_t nowMs) {
   portEXIT_CRITICAL(&featMux);
 }
 
+// Same 24-bit-in-32-bit sample layout processFrame() uses (rawSamples[i] >> 8
+// is the true 24-bit signed value) - shift 8 further down to 16-bit for the
+// WAV file, trading the bottom 8 bits of precision for a widely-playable format.
+static void writeRecordingFrame() {
+  int16_t buf16[FFT_SAMPLES];
+  for (int i = 0; i < FFT_SAMPLES; i++) buf16[i] = (int16_t)(rawSamples[i] >> 16);
+
+  size_t toWrite = FFT_SAMPLES;
+  if (micRecordSamplesWritten + FFT_SAMPLES > MIC_RECORD_TOTAL_SAMPLES) {
+    toWrite = MIC_RECORD_TOTAL_SAMPLES - micRecordSamplesWritten;
+  }
+  if (toWrite > 0) micRecordFile.write((const uint8_t*)buf16, toWrite * sizeof(int16_t));
+  micRecordSamplesWritten += toWrite;
+
+  if (micRecordSamplesWritten >= MIC_RECORD_TOTAL_SAMPLES) {
+    micRecordFile.close();
+    micRecording = false;
+    micRecordFileReady = true;
+  }
+}
+
 static void dspTask(void*) {
   for (;;) {
     size_t got = i2s.readBytes((char*)rawSamples, sizeof(rawSamples));
     if (got < sizeof(rawSamples)) { vTaskDelay(1); continue; }
+    if (micRecording) writeRecordingFrame();
     processFrame(millis());
   }
 }

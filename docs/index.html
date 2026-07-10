@@ -571,6 +571,22 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
     html += "<label>Beat Debounce (ms) <input type='range' name='beatDebounce' min='30' max='500' value='" + s.beatDebounce + "'></label>";
     html += "<input type='submit' value='Apply (save to flash)'></form>";
 
+    html += "<h2>Mic Recording</h2>";
+    html += "<div class='stub' style='padding:0.5em 0;text-align:left'>Records 10 seconds of raw mic " +
+      "audio to a .wav file on the totem, so you can listen back and judge how noisy the mic/preamp is. " +
+      "The recording itself works over Bluetooth, but downloading the finished file needs WiFi turned on below.</div>";
+    html += "<button class='tbtn' data-mic-record='1'>Record 10 seconds</button>";
+    html += "<div id='micRecordStatus'></div>";
+    var wifiForLink = state.wifi || { enabled: false, connected: false, ip: null };
+    if (state.status && state.status.micRecordReady) {
+      if (wifiForLink.connected && wifiForLink.ip) {
+        html += "<a class='link' href='http://" + wifiForLink.ip + "/mic_recording.wav' target='_blank' rel='noopener'>Download recording (.wav)</a>";
+      } else {
+        html += "<div class='stub' style='padding:0.5em 0;text-align:left'>Recording ready - turn WiFi on below, " +
+          "then reopen this Settings tab to get a download link.</div>";
+      }
+    }
+
     var w = state.wifi || { enabled: false, connected: false, ip: null };
     html += "<h2>WiFi</h2>";
     html += "<div class='row'><div>WiFi is " + (w.enabled ? (w.connected ? "on &middot; connected" + (w.ip ? " (" + w.ip + ")" : "") : "on &middot; connecting&hellip;") : "off") + "</div>";
@@ -691,6 +707,11 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
     qsa('[data-mic-nudge]', content).forEach(function (el) {
       el.addEventListener('click', function () { link.send('micNudge', { dir: el.dataset.micNudge }).catch(showError); });
     });
+    qsa('[data-mic-record]', content).forEach(function (el) {
+      el.addEventListener('click', function () {
+        link.send('micRecordStart', {}).then(function (st) { state.status = st; render('settings'); }).catch(showError);
+      });
+    });
   }
 
   // ---- tab switching + cached-list refreshers ----
@@ -723,8 +744,12 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
 
   // ---- status polling (compact status bar always; fast meters on Settings) ----
 
+  var lastMicRecordReady = false;
+
   function refreshStatus() {
     return link.send('status', {}).then(function (d) {
+      var wasReady = lastMicRecordReady;
+      lastMicRecordReady = !!d.micRecordReady;
       state.status = d;
       qs('#sbEffect').textContent = d.presetName || d.effectName || '--';
       qs('#sbBpm').textContent = d.bpm > 0 ? (Math.round(d.bpm) + ' BPM') : '';
@@ -737,6 +762,16 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
       var tb = document.getElementById('trebBar'); if (tb) tb.style.width = (d.treble * 100) + '%';
       var bpmEl = document.getElementById('bpmReadout'); if (bpmEl) bpmEl.textContent = (d.bpm > 0 ? Math.round(d.bpm) : '--') + ' BPM';
       var confEl = document.getElementById('confReadout'); if (confEl) confEl.textContent = 'lock: ' + Math.round(d.conf * 100) + '%';
+
+      var micStatus = document.getElementById('micRecordStatus');
+      if (micStatus) {
+        if (d.micRecording) micStatus.textContent = 'Recording... ' + Math.round(d.micRecordProgress * 100) + '%';
+        else if (d.micRecordReady) micStatus.textContent = 'Recording ready.';
+        else micStatus.textContent = '';
+      }
+      // the download link depends on state.wifi too, so just re-render the
+      // whole Settings tab the moment the recording flips to ready
+      if (currentTab === 'settings' && lastMicRecordReady && !wasReady) render('settings');
     }).catch(function () {});
   }
 

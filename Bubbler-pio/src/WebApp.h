@@ -176,6 +176,15 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
       var tb = document.getElementById('trebBar'); if (tb) tb.style.width = (d.treble * 100) + '%';
       var bpmEl = document.getElementById('bpmReadout'); if (bpmEl) bpmEl.textContent = (d.bpm > 0 ? Math.round(d.bpm) : '--') + ' BPM';
       var confEl = document.getElementById('confReadout'); if (confEl) confEl.textContent = 'lock: ' + Math.round(d.conf * 100) + '%';
+
+      var micStatus = document.getElementById('micRecordStatus');
+      if (micStatus) {
+        if (d.micRecording) micStatus.textContent = 'Recording... ' + Math.round(d.micRecordProgress * 100) + '%';
+        else if (d.micRecordReady) micStatus.textContent = 'Recording ready.';
+        else micStatus.textContent = '';
+      }
+      var micLink = document.getElementById('micRecordLink');
+      if (micLink) micLink.style.display = d.micRecordReady ? 'inline-block' : 'none';
     }).catch(function() {});
   }
 

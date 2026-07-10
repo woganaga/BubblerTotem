@@ -277,6 +277,9 @@ static String jsonStatus() {
   j += ",\"wifiEnabled\":" + String(wifiIsEnabled() ? "true" : "false");
   j += ",\"wifiConnected\":" + String(wifiIsConnected() ? "true" : "false");
   j += ",\"beatSync\":" + String(getBeatSyncEnabled() ? "true" : "false");
+  j += ",\"micRecording\":" + String(micRecordInProgress() ? "true" : "false");
+  j += ",\"micRecordProgress\":" + String(micRecordProgress(), 2);
+  j += ",\"micRecordReady\":" + String(micRecordReady() ? "true" : "false");
   j += "}";
   return j;
 }
@@ -558,6 +561,16 @@ static String handleCommand(const String& raw) {
 
   if (op == "setBeatSync") {
     setBeatSyncEnabled(p.getInt("enabled", 0) != 0);
+    return jsonStatus();
+  }
+
+  // The recording itself is cheap to trigger over BLE (just flips a flag);
+  // the resulting ~320KB .wav file has to be fetched over WiFi/HTTP though -
+  // pushing that much data through the ack-per-chunk BLE protocol above
+  // would take a very long time. See docs/index.html's Settings tab, which
+  // shows a download link built from the WiFi IP once this is ready.
+  if (op == "micRecordStart") {
+    micRecordStart();
     return jsonStatus();
   }
 

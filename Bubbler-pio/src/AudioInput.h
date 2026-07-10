@@ -51,3 +51,12 @@ void audioMarkMicPageActive(uint32_t nowMs);
 // true while the mic settings page appears to be open (polled recently);
 // used to flash the physical LEDs with the beat for on-device calibration
 bool audioCalibrationActive();
+
+// Raw mic noise-check recording: captures a fixed ~10s of mono 16-bit PCM
+// straight from the I2S mic to a WAV file on LittleFS, for download over
+// WiFi (too big to push over the BLE chunk protocol at any real speed).
+#define MIC_RECORDING_PATH "/mic_recording.wav"
+void micRecordStart();          // (re)starts the recording; no-op if one is already in progress
+bool micRecordInProgress();
+float micRecordProgress();      // 0..1 while recording
+bool micRecordReady();          // a finished recording exists at MIC_RECORDING_PATH

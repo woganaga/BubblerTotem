@@ -39,7 +39,12 @@ sketch at `../BubblerIno`, which is no longer the active codebase.
   detected beat onset instead of feeding it raw elapsed time, so it restarts
   and repeats in time with the tempo — no per-effect changes needed, since
   every effect already treats its time argument as "elapsed since some start
-  point."
+  point." A **Mic Recording** button (Settings tab, both transports) captures
+  a fixed 10 seconds of raw mic audio to a `.wav` file on LittleFS, so you can
+  judge how noisy the mic/preamp actually is by listening back. Triggering
+  the recording works over BLE or WiFi, but the finished file (~320KB) is
+  only downloadable over WiFi/HTTP — pushing that much data through the BLE
+  chunk protocol above would be impractically slow.
 - **Named palettes & saved effect presets** (`PaletteStore.*`,
   `CategoryStore.*`, `EffectPresetStore.*`): color palettes are created,
   edited, and deleted independently of any one effect, then *linked* to
