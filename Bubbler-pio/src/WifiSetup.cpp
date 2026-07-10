@@ -1,9 +1,8 @@
 #include "WifiSetup.h"
 #include <WiFi.h>
 #include "LittleFS.h"
+#include "Secrets.h" // WIFI_SSID / WIFI_PASSWORD - gitignored, see Secrets.h.example
 
-static const char* WIFI_SSID = "***REMOVED-SSID***";
-static const char* WIFI_PASSWORD = "***REMOVED***";
 static const char* WIFI_ENABLED_FILE = "/wifi_enabled.bin";
 
 static bool enabled = false;
