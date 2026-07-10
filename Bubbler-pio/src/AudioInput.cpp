@@ -51,11 +51,10 @@ AudioSettings& audioSettings() { return settings; }
 
 // --- mic noise-check recording (raw WAV to LittleFS) ------------------------
 
-static const uint32_t MIC_RECORD_SECONDS = 10;
-static const uint32_t MIC_RECORD_TOTAL_SAMPLES = SAMPLE_RATE * MIC_RECORD_SECONDS;
-
 static File micRecordFile;
+static File micMetaFile;
 static volatile bool micRecording = false;
+static uint32_t micRecordTotalSamples = SAMPLE_RATE * 10;
 static uint32_t micRecordSamplesWritten = 0;
 static bool micRecordFileReady = false;
 
@@ -86,19 +85,36 @@ static void writeWavHeader(File& f, uint32_t sampleRate, uint16_t bitsPerSample,
   f.write(h, sizeof(h));
 }
 
-void micRecordStart() {
+void micRecordStart(uint32_t seconds) {
   if (micRecording) return;
+  if (seconds < 5) seconds = 5;
+  if (seconds > 30) seconds = 30; // flash ceiling: 32KB/s WAV into the 1.5MB partition
   File f = LittleFS.open(MIC_RECORDING_PATH, "w");
   if (!f) return;
-  writeWavHeader(f, SAMPLE_RATE, 16, MIC_RECORD_TOTAL_SAMPLES * 2);
+  micRecordTotalSamples = SAMPLE_RATE * seconds;
+  writeWavHeader(f, SAMPLE_RATE, 16, micRecordTotalSamples * 2);
   micRecordFile = f;
+
+  // metadata sidecar: header comment records the settings in effect, so an
+  // offline analysis knows what the pipeline was configured to do
+  micMetaFile = LittleFS.open(MIC_META_PATH, "w");
+  if (micMetaFile) {
+    char hdr[192];
+    int n = snprintf(hdr, sizeof(hdr),
+      "# gain=%u noiseFloor=%u beatThreshold=%u debounceMs=%u sampleRate=%d fftSamples=%d fps=%.2f seconds=%lu\n"
+      "ms,flux,fluxMean,onset,bass,mid,treb,vol,beat,bpm,conf,phase\n",
+      settings.gain, settings.noiseFloor, settings.beatThreshold, settings.beatDebounceMs,
+      SAMPLE_RATE, FFT_SAMPLES, (double)FPS, (unsigned long)seconds);
+    if (n > 0) micMetaFile.write((const uint8_t*)hdr, n);
+  }
+
   micRecordSamplesWritten = 0;
   micRecordFileReady = false;
   micRecording = true;
 }
 
 bool micRecordInProgress() { return micRecording; }
-float micRecordProgress() { return micRecording ? (float)micRecordSamplesWritten / (float)MIC_RECORD_TOTAL_SAMPLES : 0.0f; }
+float micRecordProgress() { return micRecording ? (float)micRecordSamplesWritten / (float)micRecordTotalSamples : 0.0f; }
 bool micRecordReady() { return micRecordFileReady; }
 
 void audioSaveSettings() {
@@ -373,6 +389,18 @@ static void processFrame(uint32_t nowMs) {
   features.beatCount = beatCount;
   features.frameMs = nowMs;
   portEXIT_CRITICAL(&featMux);
+
+  // one metadata row per frame while a noise-check recording is running -
+  // the pipeline's view of the exact audio going into the WAV
+  if (micRecording && micMetaFile) {
+    char row[128];
+    int n = snprintf(row, sizeof(row), "%lu,%.4f,%.4f,%.4f,%.3f,%.3f,%.3f,%.3f,%d,%.1f,%.3f,%.3f\n",
+      (unsigned long)nowMs, (double)flux, (double)fluxMean,
+      (double)(onset > 0.0f ? onset : 0.0f),
+      (double)bassN, (double)midN, (double)trebN, (double)volume,
+      isBeat ? 1 : 0, (double)bpm, (double)confidence, (double)phase);
+    if (n > 0) micMetaFile.write((const uint8_t*)row, n);
+  }
 }
 
 // Same 24-bit-in-32-bit sample layout processFrame() uses (rawSamples[i] >> 8
@@ -383,14 +411,33 @@ static void writeRecordingFrame() {
   for (int i = 0; i < FFT_SAMPLES; i++) buf16[i] = (int16_t)(rawSamples[i] >> 16);
 
   size_t toWrite = FFT_SAMPLES;
-  if (micRecordSamplesWritten + FFT_SAMPLES > MIC_RECORD_TOTAL_SAMPLES) {
-    toWrite = MIC_RECORD_TOTAL_SAMPLES - micRecordSamplesWritten;
+  if (micRecordSamplesWritten + FFT_SAMPLES > micRecordTotalSamples) {
+    toWrite = micRecordTotalSamples - micRecordSamplesWritten;
   }
   if (toWrite > 0) micRecordFile.write((const uint8_t*)buf16, toWrite * sizeof(int16_t));
   micRecordSamplesWritten += toWrite;
 
-  if (micRecordSamplesWritten >= MIC_RECORD_TOTAL_SAMPLES) {
+  if (micRecordSamplesWritten >= micRecordTotalSamples) {
     micRecordFile.close();
+    if (micMetaFile) {
+      // final autocorrelation snapshot (most recent computeTempo result),
+      // so the offline analysis can compare its own ACF to the device's
+      micMetaFile.print("#ACF\nlag,bpm,r\n");
+      int minLag = (int)roundf(FPS * 60.0f / MAX_BPM);
+      int maxLag = (int)roundf(FPS * 60.0f / MIN_BPM);
+      if (minLag < 2) minLag = 2;
+      if (maxLag > (ONSET_HIST - 1) / 2) maxLag = (ONSET_HIST - 1) / 2;
+      int lo = minLag - 1;
+      int hi = maxLag * 2 + 1;
+      if (lo < 1) lo = 1;
+      if (hi > ONSET_HIST - 1) hi = ONSET_HIST - 1;
+      char row[48];
+      for (int lag = lo; lag <= hi; lag++) {
+        int n = snprintf(row, sizeof(row), "%d,%.1f,%.4f\n", lag, (double)(FPS * 60.0f / lag), (double)acf[lag]);
+        if (n > 0) micMetaFile.write((const uint8_t*)row, n);
+      }
+      micMetaFile.close();
+    }
     micRecording = false;
     micRecordFileReady = true;
   }

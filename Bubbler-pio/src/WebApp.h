@@ -221,6 +221,8 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
       }
       var micLink = document.getElementById('micRecordLink');
       if (micLink) micLink.style.display = d.micRecordReady ? 'inline-block' : 'none';
+      var micMeta = document.getElementById('micMetaLink');
+      if (micMeta) micMeta.style.display = d.micRecordReady ? 'inline-block' : 'none';
     }).catch(function() {});
   }
 

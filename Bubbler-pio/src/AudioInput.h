@@ -57,11 +57,20 @@ void audioMarkMicPageActive(uint32_t nowMs);
 // used to flash the physical LEDs with the beat for on-device calibration
 bool audioCalibrationActive();
 
-// Raw mic noise-check recording: captures a fixed ~10s of mono 16-bit PCM
-// straight from the I2S mic to a WAV file on LittleFS, for download over
-// WiFi (too big to push over the BLE chunk protocol at any real speed).
+// Raw mic noise-check recording: captures mono 16-bit PCM straight from the
+// I2S mic to a WAV file on LittleFS, for download over WiFi (too big to
+// push over the BLE chunk protocol at any real speed).
 #define MIC_RECORDING_PATH "/mic_recording.wav"
-void micRecordStart();          // (re)starts the recording; no-op if one is already in progress
+// sidecar written during the same capture: one CSV row per DSP frame (flux,
+// onset strength, band levels, beat flag, bpm, confidence, PLL phase) plus
+// a final autocorrelation snapshot - lets the pipeline's view of the exact
+// recorded audio be analyzed offline
+#define MIC_META_PATH "/mic_meta.csv"
+// (re)starts a recording; no-op if one is already in progress. seconds is
+// clamped to 5..30 - the WAV streams at 32KB/s into the 1.5MB LittleFS
+// partition, so ~30s is the flash ceiling. Longer captures show the tempo
+// estimator settling (its autocorrelation window alone is ~8s).
+void micRecordStart(uint32_t seconds = 10);
 bool micRecordInProgress();
 float micRecordProgress();      // 0..1 while recording
 bool micRecordReady();          // a finished recording exists at MIC_RECORDING_PATH

@@ -308,7 +308,8 @@ static void renderSettingsFragment(String& html) {
           "audio to a .wav file, so you can listen back and judge how noisy the mic/preamp is.</div>";
   html += "<button class='tbtn' data-action='/action/mic/record'>Record 10 seconds</button>";
   html += "<div id='micRecordStatus'></div>";
-  html += "<a id='micRecordLink' class='link' href='" MIC_RECORDING_PATH "' download style='display:none'>Download recording (.wav)</a>";
+  html += "<a id='micRecordLink' class='link' href='" MIC_RECORDING_PATH "' download style='display:none'>Download recording (.wav)</a> ";
+  html += "<a id='micMetaLink' class='link' href='" MIC_META_PATH "' download style='display:none'>Download DSP metadata (.csv)</a>";
 
   html += "<h2>Firmware Update</h2>";
   html += "<form id='updateForm' method='POST' action='/action/update' enctype='multipart/form-data'>";
@@ -563,7 +564,8 @@ static void handleMicNudgeAction() {
 // ---- mic recording ----
 
 static void handleMicRecordAction() {
-  micRecordStart();
+  uint32_t seconds = server.hasArg("seconds") ? (uint32_t)server.arg("seconds").toInt() : 10;
+  micRecordStart(seconds);
   server.send(204);
 }
 
@@ -573,6 +575,15 @@ static void handleMicRecordingDownload() {
   if (!f) { server.send(404, "text/plain", "No recording available yet"); return; }
   server.sendHeader("Content-Disposition", "attachment; filename=\"mic_recording.wav\"");
   server.streamFile(f, "audio/wav");
+  f.close();
+}
+
+static void handleMicMetaDownload() {
+  if (!micRecordReady()) { server.send(404, "text/plain", "No recording available yet"); return; }
+  File f = LittleFS.open(MIC_META_PATH, "r");
+  if (!f) { server.send(404, "text/plain", "No metadata available"); return; }
+  server.sendHeader("Content-Disposition", "attachment; filename=\"mic_meta.csv\"");
+  server.streamFile(f, "text/csv");
   f.close();
 }
 
@@ -628,6 +639,7 @@ void webUIInit() {
   server.on("/action/mic/nudge", HTTP_POST, handleMicNudgeAction);
   server.on("/action/mic/record", HTTP_POST, handleMicRecordAction);
   server.on(MIC_RECORDING_PATH, HTTP_GET, handleMicRecordingDownload);
+  server.on(MIC_META_PATH, HTTP_GET, handleMicMetaDownload);
 
   server.on("/action/update", HTTP_POST, handleUpdateResult, handleUpdateUpload);
 
