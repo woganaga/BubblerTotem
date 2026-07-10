@@ -177,6 +177,14 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
       var bpmEl = document.getElementById('bpmReadout'); if (bpmEl) bpmEl.textContent = (d.bpm > 0 ? Math.round(d.bpm) : '--') + ' BPM';
       var confEl = document.getElementById('confReadout'); if (confEl) confEl.textContent = 'lock: ' + Math.round(d.conf * 100) + '%';
 
+      var syncInfo = document.getElementById('syncInfo');
+      if (syncInfo) {
+        if (!d.beatSync) syncInfo.textContent = 'Beat sync is off.';
+        else if (!d.syncLocked) syncInfo.textContent = 'Listening for a steady tempo... (lock ' + Math.round(d.conf * 100) + '%)';
+        else if (d.syncActiveBeats > 0) syncInfo.textContent = 'Locked: 1 cycle = ' + d.syncActiveBeats + ' beat' + (d.syncActiveBeats === 1 ? '' : 's') + ' @ ' + Math.round(d.bpm) + ' BPM (lock ' + Math.round(d.conf * 100) + '%)';
+        else syncInfo.textContent = 'Tempo locked @ ' + Math.round(d.bpm) + ' BPM - this effect has no fixed loop, so it free-runs.';
+      }
+
       var micStatus = document.getElementById('micRecordStatus');
       if (micStatus) {
         if (d.micRecording) micStatus.textContent = 'Recording... ' + Math.round(d.micRecordProgress * 100) + '%';

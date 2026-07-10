@@ -61,10 +61,28 @@ bool loadEffectPreset(uint8_t presetId);
 uint8_t getActivePresetId();
 void setActivePresetId(uint8_t presetId);
 
-// When on, runActiveEffect() re-anchors every effect's timeline to 0 at each
-// detected beat onset (instead of feeding it raw elapsed time), so whatever
-// effect is running restarts in sync with the beat and repeats at the
-// detected tempo - no changes needed to individual effects, since they
-// already treat their nowMs argument as "time since some start point".
+// Beat sync: when on (and the tempo estimator is confidently locked),
+// runActiveEffect() stops feeding the active effect real elapsed time and
+// instead synthesizes its time input directly from the audio PLL's beat
+// clock, scaled so one full effect cycle spans exactly N beats and cycle
+// boundaries land on beats. The effect's animation then speeds up, slows
+// down, and stays in phase with the music indefinitely - no changes needed
+// to individual effects, since they're periodic pure functions of their
+// time argument (see effectNativePeriodMs / xlfxNativePeriodMs). Stochastic
+// effects with no fixed loop (Snow, Fire, Confetti, Ripple, XL Butterfly,
+// XL Plasma) free-run even when sync is on. While unlocked (no confident
+// tempo yet), everything free-runs.
 void setBeatSyncEnabled(bool enabled);
 bool getBeatSyncEnabled();
+
+// Beats per effect cycle: 0 = auto (pick 1/2/4/8 or half a beat, whichever
+// is log-closest to the cycle length the effect's speed slider implies),
+// else an explicit 0.5 / 1 / 2 / 4 / 8. While locked, the speed slider no
+// longer changes the visible rate directly - it just steers which multiple
+// auto mode picks.
+void setBeatSyncBeats(float beats);
+float getBeatSyncBeats();
+
+// live readouts for the UI (updated each runActiveEffect call)
+bool beatSyncLockedNow();     // tempo lock currently engaged?
+float beatSyncActiveBeats();  // beats per cycle actually in use right now; 0 = free-running

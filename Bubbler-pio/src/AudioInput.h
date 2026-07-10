@@ -23,6 +23,10 @@ struct AudioFeatures {
   float barPhase;    // 0..1 position within a 4-beat bar
   float confidence;  // 0..1 tempo-lock confidence
   float dominantHz;  // frequency of the loudest FFT bin
+  uint32_t beatCount; // beats elapsed since boot per the PLL clock; beatCount
+                      // + beatPhase is a continuous musical position in beats
+  uint32_t frameMs;   // millis() when this snapshot was produced (~32/s), so
+                      // consumers can extrapolate beatPhase between frames
 };
 
 AudioSettings& audioSettings();

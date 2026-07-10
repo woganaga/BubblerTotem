@@ -1,6 +1,14 @@
 #pragma once
 #include <Arduino.h>
 #include "EffectParams.h"
+#include "EffectManager.h" // EffectId, for effectNativePeriodMs
+
+// Full visual repeat length in ms for one of the original effects at the
+// given params (includes the out-and-back doubling for bounce directions),
+// or 0 for the stochastic effects (Snow, Fire, Confetti, Ripple) that have
+// no fixed loop. Used by EffectManager's beat sync to fit an effect's cycle
+// to a whole number of beats.
+float effectNativePeriodMs(EffectId id, const EffectParams& params);
 
 // Sweeps a train of bars (one per palette color) from the top of every ring
 // to the bottom (or reverse/bounce per params.direction). Colors crossfade

@@ -277,6 +277,9 @@ static String jsonStatus() {
   j += ",\"wifiEnabled\":" + String(wifiIsEnabled() ? "true" : "false");
   j += ",\"wifiConnected\":" + String(wifiIsConnected() ? "true" : "false");
   j += ",\"beatSync\":" + String(getBeatSyncEnabled() ? "true" : "false");
+  j += ",\"syncBeats\":" + String(getBeatSyncBeats(), 1);          // configured beats-per-cycle; 0 = auto
+  j += ",\"syncLocked\":" + String(beatSyncLockedNow() ? "true" : "false");
+  j += ",\"syncActiveBeats\":" + String(beatSyncActiveBeats(), 1); // in use right now; 0 = free-running
   j += ",\"micRecording\":" + String(micRecordInProgress() ? "true" : "false");
   j += ",\"micRecordProgress\":" + String(micRecordProgress(), 2);
   j += ",\"micRecordReady\":" + String(micRecordReady() ? "true" : "false");
@@ -561,6 +564,11 @@ static String handleCommand(const String& raw) {
 
   if (op == "setBeatSync") {
     setBeatSyncEnabled(p.getInt("enabled", 0) != 0);
+    return jsonStatus();
+  }
+
+  if (op == "setSyncBeats") {
+    setBeatSyncBeats(p.get("beats", "0").toFloat()); // 0 = auto, else 0.5/1/2/4/8
     return jsonStatus();
   }
 

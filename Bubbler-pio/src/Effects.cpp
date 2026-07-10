@@ -401,6 +401,33 @@ static const uint32_t RIPPLE_MAX_TRAVEL_MS = 3000;
 static const uint32_t RIPPLE_MIN_GAP_MS = 200;
 static const uint32_t RIPPLE_MAX_GAP_MS = 1200;
 
+// Keep these formulas in lockstep with the effect functions above - each one
+// answers "after how many ms does this effect's frame exactly repeat?" for
+// the same constants/direction math its render function uses.
+float effectNativePeriodMs(EffectId id, const EffectParams& p) {
+  switch (id) {
+    case EFFECT_VERTICAL_SWEEP:
+    case EFFECT_HORIZONTAL_SWEEP:
+    case EFFECT_CHASE: {
+      float base = (float)speedToPeriodMs(p.speedPct, SWEEP_MIN_PERIOD_MS, SWEEP_MAX_PERIOD_MS);
+      return (p.direction == DIR_BOUNCE) ? base * 2.0f : base; // bounce = out and back
+    }
+    case EFFECT_ALTERNATE_FLASH: // both sides flash once per full cycle (periodMs * 2)
+      return (float)speedToPeriodMs(p.speedPct, FLASH_MIN_PERIOD_MS, FLASH_MAX_PERIOD_MS) * 2.0f;
+    case EFFECT_SPIRAL: {
+      float base = (float)speedToPeriodMs(p.speedPct, SWEEP_MIN_PERIOD_MS, SWEEP_MAX_PERIOD_MS);
+      bool bounce = (p.direction == DIR_BOUNCE_IN || p.direction == DIR_BOUNCE_OUT);
+      return bounce ? base * 2.0f : base;
+    }
+    case EFFECT_PINWHEEL:
+      return (float)speedToPeriodMs(p.speedPct, PINWHEEL_MIN_PERIOD_MS, PINWHEEL_MAX_PERIOD_MS);
+    case EFFECT_COLORWASH:
+      return (float)speedToPeriodMs(p.speedPct, WASH_MIN_PERIOD_MS, WASH_MAX_PERIOD_MS);
+    default:
+      return 0.0f; // Snow/Fire/Confetti/Ripple: stochastic, no fixed loop
+  }
+}
+
 void effectRipple(const EffectParams& params, uint32_t nowMs) {
   // faster speed means shorter travel time and a shorter gap between ripples
   uint32_t travelMs = speedToPeriodMs(params.speedPct, RIPPLE_MAX_TRAVEL_MS, RIPPLE_MIN_TRAVEL_MS);

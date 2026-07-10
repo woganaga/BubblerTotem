@@ -1,6 +1,12 @@
 #pragma once
 #include <Arduino.h>
 #include "EffectParams.h"
+#include "EffectManager.h" // EffectId, for xlfxNativePeriodMs
+
+// Full visual repeat length in ms for one of the xLights-derived effects at
+// the given params, or 0 for the field effects (Butterfly, Plasma) whose
+// animation never exactly repeats. See Effects.h's effectNativePeriodMs.
+float xlfxNativePeriodMs(EffectId id, const EffectParams& params);
 
 // xLights-derived effects. Each renders into a 27x6 scratch buffer (the
 // unrolled cylinder: x = position around a ring, y = ring index) and commits

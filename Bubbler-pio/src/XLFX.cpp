@@ -40,6 +40,31 @@ static inline float speedCycles(uint8_t speedPct, float scale) {
   return (speedPct / 100.0f) * scale;
 }
 
+// Keep these in lockstep with the render functions below - each answers
+// "after how many ms does this effect's frame exactly repeat?" using the same
+// speedCycles() scale constant its render function uses.
+float xlfxNativePeriodMs(EffectId id, const EffectParams& p) {
+  float cps = 0.0f;
+  switch (id) {
+    case EFFECT_XL_BARS:      cps = speedCycles(p.speedPct, 3.0f); break; // pos wraps 0..1
+    case EFFECT_XL_COLORWASH: cps = speedCycles(p.speedPct, 1.5f); break; // phase wraps 0..1
+    case EFFECT_XL_SPIRALS:
+      // scroll advances speedCycles*LEDS_PER_RING px/s; the strand pattern
+      // (colors included) maps onto itself every LEDS_PER_RING/count px
+      cps = speedCycles(p.speedPct, 8.0f) * (p.count < 1 ? 1 : p.count);
+      break;
+    case EFFECT_XL_PINWHEEL:
+      // rot advances speedCycles*120 deg/s; identical again after a full turn
+      cps = speedCycles(p.speedPct, 120.0f) / 360.0f;
+      break;
+    case EFFECT_XL_SINGLESTRAND: cps = speedCycles(p.speedPct, 1.0f); break; // pos wraps 0..1 (bounce folds within it)
+    case EFFECT_XL_MORPH:        cps = speedCycles(p.speedPct, 0.7f); break; // prog wraps 0..1
+    default:
+      return 0.0f; // Butterfly/Plasma: incommensurate sine fields, never exactly repeat
+  }
+  return cps > 1e-6f ? 1000.0f / cps : 0.0f;
+}
+
 // ---- Bars ------------------------------------------------------------------
 // count=bar repeat, style: 0 along-totem / 1 around-ring, direction FWD/REV/BOUNCE(expand),
 // flag=gradient, flag2=3D fade across each bar.

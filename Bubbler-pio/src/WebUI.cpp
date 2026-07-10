@@ -52,9 +52,25 @@ static void renderMainFragment(String& html) {
   html += "<button class='tbtn" + String(beatSync ? " active" : "") + "' data-action='/action/beatsync?enabled=" + String(beatSync ? 0 : 1) + "'>";
   html += beatSync ? "On" : "Off";
   html += "</button></div>";
-  html += "<div class='stub'>When on, the running effect restarts at every "
-          "detected beat, syncing its animation to the tempo. Category-based "
-          "show mode is coming soon here.</div>";
+
+  // beats-per-cycle selector (0 = auto)
+  static const float SYNC_CHOICES[] = { 0.0f, 0.5f, 1.0f, 2.0f, 4.0f, 8.0f };
+  static const char* const SYNC_LABELS[] = { "Auto", "&frac12;", "1", "2", "4", "8" };
+  float current = getBeatSyncBeats();
+  html += "<div>Beats per cycle</div><div class='tempoRow'>";
+  for (uint8_t i = 0; i < 6; i++) {
+    bool sel = fabsf(current - SYNC_CHOICES[i]) < 0.01f;
+    html += "<button class='tbtn" + String(sel ? " active" : "") + "' data-action='/action/syncbeats?beats=" + String(SYNC_CHOICES[i], 1) + "'>";
+    html += SYNC_LABELS[i];
+    html += "</button>";
+  }
+  html += "</div>";
+  html += "<div id='syncInfo' class='stub' style='padding:0.8em 0'></div>";
+
+  html += "<div class='stub'>When on, the running effect's loop is timed to "
+          "span a whole number of beats and stay in phase with the music, "
+          "once a steady tempo is detected. Category-based show mode is "
+          "coming soon here.</div>";
 }
 
 static void renderEffectParamsForm(String& html) {
@@ -362,6 +378,9 @@ static void handleApiStatus() {
   json += ",\"bpm\":" + String((int)(f.bpm + 0.5f));
   json += ",\"conf\":" + String(f.confidence, 2);
   json += ",\"beatSync\":" + String(getBeatSyncEnabled() ? "true" : "false");
+  json += ",\"syncBeats\":" + String(getBeatSyncBeats(), 1);          // configured beats-per-cycle; 0 = auto
+  json += ",\"syncLocked\":" + String(beatSyncLockedNow() ? "true" : "false");
+  json += ",\"syncActiveBeats\":" + String(beatSyncActiveBeats(), 1); // in use right now; 0 = free-running
   json += ",\"micRecording\":" + String(micRecordInProgress() ? "true" : "false");
   json += ",\"micRecordProgress\":" + String(micRecordProgress(), 2);
   json += ",\"micRecordReady\":" + String(micRecordReady() ? "true" : "false");
@@ -373,6 +392,11 @@ static void handleApiStatus() {
 
 static void handleBeatSyncAction() {
   setBeatSyncEnabled(server.hasArg("enabled") ? server.arg("enabled").toInt() != 0 : true);
+  server.send(204);
+}
+
+static void handleSyncBeatsAction() {
+  setBeatSyncBeats(server.hasArg("beats") ? server.arg("beats").toFloat() : 0.0f); // 0 = auto
   server.send(204);
 }
 
@@ -585,6 +609,7 @@ void webUIInit() {
   server.on("/api/status", HTTP_GET, handleApiStatus);
 
   server.on("/action/beatsync", HTTP_POST, handleBeatSyncAction);
+  server.on("/action/syncbeats", HTTP_POST, handleSyncBeatsAction);
 
   server.on("/action/effect/activate", HTTP_POST, handleEffectActivate);
   server.on("/action/effect/params", HTTP_POST, handleEffectParamsAction);

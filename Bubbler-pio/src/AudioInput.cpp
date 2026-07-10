@@ -183,8 +183,16 @@ static void computeTempo() {
   float conf = avg > 1e-9f ? (best / avg - 1.0f) / 3.0f : 0.0f;
   confidence = conf < 0 ? 0 : (conf > 1 ? 1 : conf);
 
-  if (smoothedBpm < 1e-3f) smoothedBpm = bpm;
-  else smoothedBpm = smoothedBpm * 0.8f + bpm * 0.2f;
+  if (smoothedBpm < 1e-3f) {
+    smoothedBpm = bpm;
+  } else {
+    // Once the autocorrelation is confidently locked, blend new estimates in
+    // much more slowly - the tempo should settle and hold steady rather than
+    // wander with every wobble in the onset envelope. While unconfident,
+    // re-acquire quickly.
+    float alpha = confidence > 0.5f ? 0.05f : 0.2f;
+    smoothedBpm = smoothedBpm * (1.0f - alpha) + bpm * alpha;
+  }
 }
 
 static void processFrame(uint32_t nowMs) {
@@ -282,6 +290,8 @@ static void processFrame(uint32_t nowMs) {
   features.barPhase = barPhase;
   features.confidence = confidence;
   features.dominantHz = dominantHz;
+  features.beatCount = beatCount;
+  features.frameMs = nowMs;
   portEXIT_CRITICAL(&featMux);
 }
 

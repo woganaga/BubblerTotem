@@ -34,8 +34,10 @@ static uint8_t effectPaletteId[EFFECT_COUNT];
 static uint8_t activePresetId = PRESET_ID_NONE;
 
 static bool beatSyncEnabled = false;
-static uint32_t beatSyncAnchorMs = 0; // nowMs at the most recent detected beat onset
-static bool beatSyncWasActive = false; // for edge-detecting audioBeatActive()'s ~120ms-long pulse
+static float beatSyncBeatsOverride = 0.0f; // beats per effect cycle; 0 = auto
+static float beatSyncAutoBeats = 1.0f;     // auto mode's current pick (kept across frames for hysteresis)
+static bool beatSyncLocked = false;        // tempo lock engaged (confidence hysteresis below)
+static float beatSyncActiveM = 0.0f;       // multiple in use this frame; 0 = free-running
 
 static EffectParams effectParams[EFFECT_COUNT] = {
   { { {}, 0 }, 50, 100, DIR_FORWARD, 1, 3, 1, 50, 0 },                                          // Off (unused)
@@ -92,6 +94,71 @@ void setActivePresetId(uint8_t presetId) { activePresetId = presetId; }
 void setBeatSyncEnabled(bool enabled) { beatSyncEnabled = enabled; }
 bool getBeatSyncEnabled() { return beatSyncEnabled; }
 
+void setBeatSyncBeats(float beats) { beatSyncBeatsOverride = beats; }
+float getBeatSyncBeats() { return beatSyncBeatsOverride; }
+bool beatSyncLockedNow() { return beatSyncEnabled && beatSyncLocked; }
+float beatSyncActiveBeats() { return beatSyncEnabled ? beatSyncActiveM : 0.0f; }
+
+// full visual cycle length of the active effect at its current params, or 0
+// if it has no fixed loop (see Effects.h / XLFX.h)
+static float activeEffectCycleMs() {
+  if (activeEffect >= EFFECT_XL_BARS) return xlfxNativePeriodMs(activeEffect, effectParams[activeEffect]);
+  return effectNativePeriodMs(activeEffect, effectParams[activeEffect]);
+}
+
+// Synthesizes the active effect's time input from the audio PLL's beat clock
+// so one effect cycle spans exactly M beats, phase-aligned to the beat: the
+// returned time is (musical position in beats / M, wrapped to one cycle) *
+// cycleMs, so it sweeps 0..cycleMs once per M beats and snaps back to 0 ON a
+// beat. Falls back to real time while the tempo estimator isn't confidently
+// locked (with hysteresis so a borderline confidence doesn't flap the mode),
+// or when the effect has no fixed cycle to fit to the tempo.
+static uint32_t beatSyncedTimeMs(uint32_t nowMs, float cycleMs) {
+  AudioFeatures f = audioFeatures();
+
+  if (!beatSyncLocked) {
+    if (f.bpm > 1.0f && f.confidence >= 0.30f) beatSyncLocked = true;
+  } else if (f.bpm <= 1.0f || f.confidence < 0.12f) {
+    beatSyncLocked = false;
+  }
+  if (!beatSyncLocked || cycleMs <= 0.0f) {
+    beatSyncActiveM = 0.0f;
+    return nowMs;
+  }
+
+  float M = beatSyncBeatsOverride;
+  if (M <= 0.0f) {
+    // Auto: pick the multiple whose resulting cycle is log-closest to the
+    // cycle the user's speed setting implies. Only switch away from the
+    // current pick when the winner is clearly better (0.15 in log2 terms),
+    // so BPM jitter near a boundary doesn't flip the visible rate around.
+    static const float CHOICES[] = { 0.5f, 1.0f, 2.0f, 4.0f, 8.0f };
+    float idealBeats = cycleMs / (60000.0f / f.bpm);
+    float best = beatSyncAutoBeats;
+    float bestErr = 1e9f;
+    for (uint8_t i = 0; i < sizeof(CHOICES) / sizeof(CHOICES[0]); i++) {
+      float err = fabsf(log2f(idealBeats / CHOICES[i]));
+      if (err < bestErr) { bestErr = err; best = CHOICES[i]; }
+    }
+    float currentErr = fabsf(log2f(idealBeats / beatSyncAutoBeats));
+    if (best != beatSyncAutoBeats && bestErr + 0.15f < currentErr) beatSyncAutoBeats = best;
+    M = beatSyncAutoBeats;
+  }
+  beatSyncActiveM = M;
+
+  // Continuous musical position in beats. The DSP publishes ~32 snapshots/s,
+  // so extrapolate beatPhase forward from the snapshot's timestamp at the
+  // current tempo to avoid ~31ms time-quantization stutter in the animation.
+  // beatCount is wrapped (mod a multiple of every allowed M) before going
+  // float so precision doesn't degrade with uptime; the wrap lands exactly
+  // on a cycle boundary so it's invisible.
+  float beats = (float)(f.beatCount & 511u) + f.beatPhase
+              + (float)(int32_t)(nowMs - f.frameMs) * (f.bpm / 60000.0f);
+  float cyclePos = beats / M;
+  cyclePos -= floorf(cyclePos); // 0..1 within the current M-beat cycle
+  return (uint32_t)(cyclePos * cycleMs);
+}
+
 bool loadEffectPreset(uint8_t presetId) {
   const EffectPreset* preset = presetGet(presetId);
   if (!preset) return false;
@@ -120,15 +187,8 @@ void runActiveEffect(uint32_t nowMs) {
   }
 
   uint32_t effectNowMs = nowMs;
-  if (beatSyncEnabled) {
-    // audioBeatActive() stays true for a ~120ms flash after each onset, so
-    // only re-anchor on its rising edge - otherwise every one of the many
-    // loop() calls during that window would reset the anchor to "now",
-    // instead of to the moment the beat actually started.
-    bool beatNow = audioBeatActive();
-    if (beatNow && !beatSyncWasActive) beatSyncAnchorMs = nowMs;
-    beatSyncWasActive = beatNow;
-    effectNowMs = nowMs - beatSyncAnchorMs; // elapsed time since the most recent beat onset
+  if (beatSyncEnabled && activeEffect != EFFECT_OFF) {
+    effectNowMs = beatSyncedTimeMs(nowMs, activeEffectCycleMs());
   }
 
   const EffectParams& p = effectParams[activeEffect];

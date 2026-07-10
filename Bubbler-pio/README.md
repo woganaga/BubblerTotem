@@ -34,12 +34,21 @@ sketch at `../BubblerIno`, which is no longer the active codebase.
   `AudioFeatures` snapshot — bass/mid/treble energy, smoothed volume, beat
   detection, and a BPM estimate (autocorrelation of the onset envelope + a
   PLL beat clock) with tap-tempo and ×2/÷2 override. **Beat Sync** (toggle on
-  the Main tab; `setBeatSyncEnabled()`/`getBeatSyncEnabled()` in
-  `EffectManager.*`) re-anchors the running effect's timeline to 0 at every
-  detected beat onset instead of feeding it raw elapsed time, so it restarts
-  and repeats in time with the tempo — no per-effect changes needed, since
-  every effect already treats its time argument as "elapsed since some start
-  point." A **Mic Recording** button (Settings tab, both transports) captures
+  the Main tab) tempo-locks the running effect: once the tempo estimator is
+  confidently locked, `EffectManager` stops feeding the effect real elapsed
+  time and synthesizes its time input from the PLL beat clock, scaled so one
+  full effect cycle spans exactly N beats (N auto-picked from ½/1/2/4/8 to
+  best match the effect's speed setting, or fixed via the Beats-per-cycle
+  buttons) with cycle boundaries landing on beats. The animation speeds up,
+  slows down, and stays in phase with the music indefinitely — no per-effect
+  changes needed, since each periodic effect is a pure function of its time
+  argument and exposes its natural cycle length via
+  `effectNativePeriodMs()`/`xlfxNativePeriodMs()`. Stochastic effects with no
+  fixed loop (Snow, Fire, Confetti, Ripple, XL Butterfly, XL Plasma)
+  free-run; while no confident tempo is detected, everything free-runs (with
+  hysteresis so borderline confidence doesn't flap between modes). The Main
+  tab shows a live readout of the lock state. A **Mic Recording** button
+  (Settings tab, both transports) captures
   a fixed 10 seconds of raw mic audio to a `.wav` file on LittleFS, so you can
   judge how noisy the mic/preamp actually is by listening back. Triggering
   the recording works over BLE or WiFi, but the finished file (~320KB) is
