@@ -36,8 +36,9 @@ void audioSaveSettings();
 
 void audioInit();
 
-// retained for source compatibility; the DSP now runs on its own core-0 task,
-// so this is a no-op. Safe to keep calling from loop().
+// call every loop(): blinks the onboard status LED (GPIO21, active low) in
+// real time with the PLL beat clock once a tempo is tracked, or with raw
+// onsets before that. (The DSP itself runs on its own core-0 task.)
 void audioUpdate(uint32_t nowMs);
 
 AudioFeatures audioFeatures(); // thread-safe snapshot copy

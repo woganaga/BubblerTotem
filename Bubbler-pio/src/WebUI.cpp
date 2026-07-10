@@ -377,6 +377,7 @@ static void handleApiStatus() {
   json += ",\"treble\":" + String(f.treble, 3);
   json += ",\"bpm\":" + String((int)(f.bpm + 0.5f));
   json += ",\"conf\":" + String(f.confidence, 2);
+  json += ",\"beatPhase\":" + String(f.beatPhase, 3); // for the status bar's tempo pulse
   json += ",\"beatSync\":" + String(getBeatSyncEnabled() ? "true" : "false");
   json += ",\"syncBeats\":" + String(getBeatSyncBeats(), 1);          // configured beats-per-cycle; 0 = auto
   json += ",\"syncLocked\":" + String(beatSyncLockedNow() ? "true" : "false");

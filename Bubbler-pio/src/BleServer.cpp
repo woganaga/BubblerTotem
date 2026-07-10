@@ -274,6 +274,7 @@ static String jsonStatus() {
   j += ",\"treble\":" + String(f.treble, 3);
   j += ",\"bpm\":" + String((int)(f.bpm + 0.5f));
   j += ",\"conf\":" + String(f.confidence, 2);
+  j += ",\"beatPhase\":" + String(f.beatPhase, 3); // for the status bar's tempo pulse
   j += ",\"wifiEnabled\":" + String(wifiIsEnabled() ? "true" : "false");
   j += ",\"wifiConnected\":" + String(wifiIsConnected() ? "true" : "false");
   j += ",\"beatSync\":" + String(getBeatSyncEnabled() ? "true" : "false");

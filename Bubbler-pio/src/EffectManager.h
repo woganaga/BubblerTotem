@@ -24,6 +24,9 @@ enum EffectId {
   EFFECT_XL_PLASMA,
   EFFECT_XL_SINGLESTRAND,
   EFFECT_XL_MORPH,
+  // NOTE: only append new effects here - saved presets store effectType as
+  // the raw numeric id (EffectPresetStore), so reordering breaks them.
+  EFFECT_BEAT_FLASH, // whole-array flash pulse, for eyeballing beat/tempo sync
   EFFECT_COUNT
 };
 

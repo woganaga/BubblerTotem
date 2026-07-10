@@ -29,6 +29,11 @@ body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 #statusbar #sbDot{width:0.6em;height:0.6em;border-radius:50%;background:#555;flex-shrink:0}
 #statusbar #sbDot.on{background:#4caf50}
 #statusbar #sbBpm{color:#999}
+#sbPulse{width:0.6em;height:0.6em;border-radius:50%;background:#e6a23c;flex-shrink:0;opacity:0.35;display:none}
+#sbPulse.locked{background:#4caf50}
+@keyframes sbpulse{0%{transform:scale(1.6);opacity:1}35%{transform:scale(1);opacity:0.35}100%{transform:scale(1);opacity:0.35}}
+#sbSync{color:#4caf50;font-size:0.85em}
+#sbSync.wait{color:#999}
 #content{padding:1em 1em calc(5.5em + env(safe-area-inset-bottom));max-width:480px;margin:0 auto}
 #tabbar{position:fixed;left:0;right:0;bottom:0;z-index:10;display:flex;background:#1a1a1a;border-top:1px solid #2a2a2a;padding-bottom:env(safe-area-inset-bottom)}
 #tabbar button{flex:1;background:none;border:none;color:#999;font-size:0.7em;padding:0.6em 0;display:flex;flex-direction:column;align-items:center;gap:0.15em;cursor:pointer;font-family:inherit}
@@ -66,7 +71,7 @@ section+section,h2{margin-top:1.4em;padding-top:0.8em;border-top:1px solid #2626
 h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
 </style>
 </head><body>
-<div id='statusbar'><span id='sbDot'></span><span id='sbEffect'>--</span><span id='sbBpm'></span></div>
+<div id='statusbar'><span id='sbDot'></span><span id='sbPulse'></span><span id='sbEffect'>--</span><span id='sbBpm'></span><span id='sbSync'></span></div>
 <div id='content'></div>
 <nav id='tabbar'>
 <button data-tab='main'><span class='ic'>&#127899;</span>Main</button>
@@ -166,8 +171,31 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
     var url = '/api/status' + (currentTab === 'settings' ? '?mic=1' : '');
     return fetch(url).then(function(r) { return r.json(); }).then(function(d) {
       qs('#sbEffect').textContent = d.presetName || d.effectName || '--';
-      qs('#sbBpm').textContent = d.bpm > 0 ? (Math.round(d.bpm) + ' BPM') : '';
+      qs('#sbBpm').textContent = d.bpm > 0 ? (Math.round(d.bpm) + ' BPM ' + Math.round(d.conf * 100) + '%') : '';
       qs('#sbDot').classList.toggle('on', d.beat);
+
+      // sync badge: hidden when beat sync is off, "..." while listening,
+      // beats-per-cycle when locked
+      var sy = qs('#sbSync');
+      if (!d.beatSync) { sy.textContent = ''; }
+      else if (!d.syncLocked) { sy.textContent = '♪...'; sy.className = 'wait'; }
+      else { sy.textContent = '♪' + (d.syncActiveBeats > 0 ? '×' + d.syncActiveBeats : ''); sy.className = ''; }
+
+      // tempo pulse: beats at the detected BPM between polls, re-phased to
+      // the device's beat clock on every poll (restart the animation with a
+      // negative delay so its cycle start lines up with the device's phase)
+      var pu = qs('#sbPulse');
+      if (d.bpm > 0) {
+        var per = 60 / d.bpm;
+        pu.style.display = 'inline-block';
+        pu.classList.toggle('locked', !!d.syncLocked);
+        pu.style.animation = 'none';
+        void pu.offsetWidth; /* reflow so the next line restarts the animation */
+        pu.style.animation = 'sbpulse ' + per.toFixed(3) + 's linear infinite';
+        pu.style.animationDelay = (-(d.beatPhase || 0) * per).toFixed(3) + 's';
+      } else {
+        pu.style.display = 'none';
+      }
 
       var vu = document.getElementById('vuBar'); if (vu) vu.style.width = (d.level * 100) + '%';
       var bd = document.getElementById('beatDot'); if (bd) bd.className = d.beat ? 'on' : '';

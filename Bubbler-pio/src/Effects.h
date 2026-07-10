@@ -63,3 +63,10 @@ void effectConfetti(const EffectParams& params, uint32_t nowMs);
 // Pulses spawn at the ring3/ring4 gap (the totem's physical center) and
 // expand outward toward both ends, fading as they go, like a heartbeat.
 void effectRipple(const EffectParams& params, uint32_t nowMs);
+
+// The whole array flashes bright at the start of every period and decays to
+// black - a metronome for the eyes, made for testing beat/tempo sync (turn
+// Beat Sync on with 1 beat per cycle and it should flash exactly on the
+// beat). Advances one palette color per flash; params.thickness sets how
+// much of the interval the flash stays lit (%).
+void effectBeatFlash(const EffectParams& params, uint32_t nowMs);

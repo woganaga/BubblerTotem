@@ -401,6 +401,28 @@ static const uint32_t RIPPLE_MAX_TRAVEL_MS = 3000;
 static const uint32_t RIPPLE_MIN_GAP_MS = 200;
 static const uint32_t RIPPLE_MAX_GAP_MS = 1200;
 
+static const uint32_t BEATFLASH_MIN_PERIOD_MS = 250;  // 240 BPM
+static const uint32_t BEATFLASH_MAX_PERIOD_MS = 2000; // 30 BPM
+
+void effectBeatFlash(const EffectParams& params, uint32_t nowMs) {
+  uint32_t periodMs = speedToPeriodMs(params.speedPct, BEATFLASH_MIN_PERIOD_MS, BEATFLASH_MAX_PERIOD_MS);
+  uint8_t colors = params.palette.count < 1 ? 1 : params.palette.count;
+  uint32_t fullMs = periodMs * colors; // one flash per period, one palette color per flash
+  float t = (float)(nowMs % fullMs) / (float)periodMs;
+  int idx = (int)t;
+  float phase = t - (float)idx; // 0..1 within this flash's interval
+
+  // instant attack at phase 0, quadratic decay to black over `lit` of the interval
+  float lit = (params.thickness < 5 ? 5 : params.thickness) / 100.0f;
+  float b = 1.0f - phase / lit;
+  if (b < 0.0f) b = 0.0f;
+  b *= b;
+
+  CRGB c = params.palette.colors[idx % colors];
+  c.nscale8((uint8_t)(b * 255.0f + 0.5f));
+  setAll(c);
+}
+
 // Keep these formulas in lockstep with the effect functions above - each one
 // answers "after how many ms does this effect's frame exactly repeat?" for
 // the same constants/direction math its render function uses.
@@ -423,6 +445,14 @@ float effectNativePeriodMs(EffectId id, const EffectParams& p) {
       return (float)speedToPeriodMs(p.speedPct, PINWHEEL_MIN_PERIOD_MS, PINWHEEL_MAX_PERIOD_MS);
     case EFFECT_COLORWASH:
       return (float)speedToPeriodMs(p.speedPct, WASH_MIN_PERIOD_MS, WASH_MAX_PERIOD_MS);
+    case EFFECT_BEAT_FLASH: {
+      // full repeat spans all palette colors (one flash each). With a 1- or
+      // 2-color palette and beat sync at 1 or 2 beats/cycle, each flash
+      // lands exactly on a beat; 3-color palettes can't fit the power-of-2
+      // multiples, so keep the palette at 1/2/4 colors when testing sync.
+      uint8_t colors = p.palette.count < 1 ? 1 : p.palette.count;
+      return (float)speedToPeriodMs(p.speedPct, BEATFLASH_MIN_PERIOD_MS, BEATFLASH_MAX_PERIOD_MS) * colors;
+    }
     default:
       return 0.0f; // Snow/Fire/Confetti/Ripple: stochastic, no fixed loop
   }

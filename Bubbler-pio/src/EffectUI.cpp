@@ -69,4 +69,6 @@ const EffectUIInfo EFFECT_UI[EFFECT_COUNT] = {
     "Chases", 6, "Fade", 0, 3, nullptr, 0, nullptr, nullptr, nullptr, "Palette Colors" },             // XL SingleStrand
   { true, false, false, false, false, nullptr, 0,
     nullptr, 0, "Path", 0, 2, nullptr, 0, nullptr, nullptr, nullptr, nullptr },                       // XL Morph
+  { false, false, false, false, false, nullptr, 0,
+    nullptr, 0, nullptr, 0, 0, nullptr, 0, "Flash Length %", nullptr, nullptr, nullptr },             // Beat Flash
 };

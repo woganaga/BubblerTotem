@@ -19,12 +19,18 @@ sketch at `../BubblerIno`, which is no longer the active codebase.
     in check.
 - **Mic:** INMP441 I2S microphone
   - Pin 44: SCK, Pin 7: WS, Pin 8: SD
+- **Status LED:** GPIO 21 (active low) — blinks in real time with the PLL
+  beat clock once a tempo is tracked (raw onsets before that), so the beat
+  tracker can be eyeballed against the music with no UI polling latency
 
 ## Features
 
 - **Effects** (`EffectManager.*`, `Effects.*`): 12 original effects (Vertical/
   Horizontal Sweep, Alternate Flash, Chase, Spiral, Snow, Pinwheel, Colorwash,
-  Fire, Confetti, Ripple) plus 8 effects ported from xLights (`XLFX.*`) that
+  Fire, Confetti, Ripple) plus a **Beat Flash** test effect (whole array
+  flashes and decays once per period — a metronome for the eyes; run it with
+  Beat Sync at 1 beat/cycle to see exactly what the tempo tracker is doing)
+  plus 8 effects ported from xLights (`XLFX.*`) that
   render onto the ring array treated as an unrolled 27×6 grid (Bars,
   Colorwash, Spirals, Pinwheel, Butterfly, Plasma, SingleStrand, Morph). Each
   effect keeps its own parameters (palette, speed, intensity, direction, and
@@ -47,7 +53,11 @@ sketch at `../BubblerIno`, which is no longer the active codebase.
   fixed loop (Snow, Fire, Confetti, Ripple, XL Butterfly, XL Plasma)
   free-run; while no confident tempo is detected, everything free-runs (with
   hysteresis so borderline confidence doesn't flap between modes). The Main
-  tab shows a live readout of the lock state. A **Mic Recording** button
+  tab shows a live readout of the lock state, and the status bar visualizes
+  the tracker at a glance: detected-onset dot, a pulse dot that beats at the
+  detected BPM (amber while unlocked, green when sync is locked — re-phased
+  to the device's beat clock on every status poll), BPM + lock confidence,
+  and a ♪×N badge showing the locked beats-per-cycle. A **Mic Recording** button
   (Settings tab, both transports) captures
   a fixed 10 seconds of raw mic audio to a `.wav` file on LittleFS, so you can
   judge how noisy the mic/preamp actually is by listening back. Triggering

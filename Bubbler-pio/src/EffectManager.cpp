@@ -27,6 +27,7 @@ const char* const EFFECT_NAMES[EFFECT_COUNT] = {
   "XL Plasma",
   "XL SingleStrand",
   "XL Morph",
+  "Beat Flash",
 };
 
 static EffectId activeEffect = EFFECT_OFF;
@@ -61,6 +62,7 @@ static EffectParams effectParams[EFFECT_COUNT] = {
   { { { CRGB::Blue, CRGB::Purple, CRGB::Red }, 3 }, 40, 100, DIR_FORWARD, 1, 3, 1, 50, 0, 1, 0, 2, 0,   0, 0, 0 }, // XL Plasma
   { { { CRGB::Red, CRGB::Green, CRGB::Blue }, 3 }, 50, 100, DIR_FORWARD, 1, 3, 1, 50, 0,  2, 1, 1, 0,    0, 0, 1 }, // XL SingleStrand
   { { { CRGB::White, CRGB::Blue }, 2 }, 40, 100, DIR_FORWARD, 2, 3, 1, 50, 0,             1, 0, 1, 0,    0, 0, 0 }, // XL Morph
+  { { { CRGB::White }, 1 }, 85, 100, DIR_FORWARD, 1, 3, 1, 50, 0,                          1, 0, 1, 40,   0, 0, 0 }, // Beat Flash (speed 85 ~= 120 BPM free-running)
 };
 
 void effectManagerInit() {
@@ -102,7 +104,9 @@ float beatSyncActiveBeats() { return beatSyncEnabled ? beatSyncActiveM : 0.0f; }
 // full visual cycle length of the active effect at its current params, or 0
 // if it has no fixed loop (see Effects.h / XLFX.h)
 static float activeEffectCycleMs() {
-  if (activeEffect >= EFFECT_XL_BARS) return xlfxNativePeriodMs(activeEffect, effectParams[activeEffect]);
+  if (activeEffect >= EFFECT_XL_BARS && activeEffect <= EFFECT_XL_MORPH) {
+    return xlfxNativePeriodMs(activeEffect, effectParams[activeEffect]);
+  }
   return effectNativePeriodMs(activeEffect, effectParams[activeEffect]);
 }
 
@@ -212,6 +216,7 @@ void runActiveEffect(uint32_t nowMs) {
     case EFFECT_XL_PLASMA:        xlPlasma(p, effectNowMs); break;
     case EFFECT_XL_SINGLESTRAND:  xlSingleStrand(p, effectNowMs); break;
     case EFFECT_XL_MORPH:         xlMorph(p, effectNowMs); break;
+    case EFFECT_BEAT_FLASH:       effectBeatFlash(p, effectNowMs); break;
     case EFFECT_OFF:
     default:
       return; // already blacked out by setActiveEffect

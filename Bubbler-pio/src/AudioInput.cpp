@@ -9,6 +9,8 @@ static const char* SETTINGS_FILE = "/mic_settings.bin";
 #define MIC_WS_PIN   7
 #define MIC_SD_PIN   8
 
+#define STATUS_LED_PIN 21 // onboard status LED, active low (pull low to light)
+
 #define SAMPLE_RATE   16000
 #define FFT_SAMPLES   512                              // ~32 FFT frames/sec at 16kHz
 #define BIN_HZ        ((float)SAMPLE_RATE / FFT_SAMPLES) // 31.25 Hz per bin
@@ -328,12 +330,32 @@ static void dspTask(void*) {
 void audioInit() {
   LittleFS.begin(true);
   loadSettings();
+  pinMode(STATUS_LED_PIN, OUTPUT);
+  digitalWrite(STATUS_LED_PIN, HIGH); // off (active low)
   i2s.setPins(MIC_SCK_PIN, MIC_WS_PIN, -1, MIC_SD_PIN);
   i2s.begin(I2S_MODE_STD, SAMPLE_RATE, I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_MONO, I2S_STD_SLOT_LEFT);
   xTaskCreatePinnedToCore(dspTask, "dsp", 8192, nullptr, 1, nullptr, 0);
 }
 
-void audioUpdate(uint32_t) {} // no-op; DSP runs on the core-0 task
+// The DSP itself runs on the core-0 task; this (called every loop()) just
+// drives the onboard status LED as a real-time beat indicator - no UI
+// polling latency. Once a tempo is tracked it blinks with the PLL beat
+// clock (the same clock beat-synced effects follow, so LED vs. LEDs vs.
+// music can be compared directly); before that, it flashes raw detected
+// onsets so there's still feedback while the tempo settles.
+void audioUpdate(uint32_t nowMs) {
+  static float lastPhase = 0.0f;
+  static uint32_t flashUntilMs = 0;
+
+  AudioFeatures f = audioFeatures();
+  if (f.bpm > 1.0f) {
+    if (f.beatPhase < lastPhase) flashUntilMs = nowMs + 60; // phase wrapped -> a beat just started
+    lastPhase = f.beatPhase;
+  } else if (audioBeatActive()) {
+    flashUntilMs = nowMs + 60;
+  }
+  digitalWrite(STATUS_LED_PIN, (nowMs < flashUntilMs) ? LOW : HIGH); // active low
+}
 
 AudioFeatures audioFeatures() {
   AudioFeatures snap;
