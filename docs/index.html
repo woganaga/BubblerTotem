@@ -50,9 +50,30 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
 #connectScreen{min-height:100%;display:flex;align-items:center;justify-content:center;padding:2em 1em}
 #connectScreen .stub{max-width:360px}
 #connectError{color:#ff5252;font-size:0.9em;min-height:1.2em}
+#debugToggleBtn{position:fixed;top:calc(0.5em + env(safe-area-inset-top));right:0.5em;z-index:30;
+  min-height:0;padding:0.4em 0.7em;font-size:0.75em;background:#333;color:#8f8;border:1px solid #444;border-radius:6px;opacity:0.85}
+#debugPanel{display:none;position:fixed;inset:0;z-index:25;background:#0a0a0a;padding:0.6em;
+  padding-top:calc(0.6em + env(safe-area-inset-top));flex-direction:column}
+#debugPanel.open{display:flex}
+#debugToolbar{display:flex;gap:0.4em;margin-bottom:0.5em;flex-shrink:0}
+#debugToolbar button{flex:1;min-height:36px;padding:0.4em;font-size:0.85em}
+#debugLog{flex:1;overflow:auto;white-space:pre-wrap;word-break:break-all;font-family:'SF Mono',Menlo,Consolas,monospace;
+  font-size:0.7em;line-height:1.45;color:#8f8;background:#111;border:1px solid #262626;border-radius:8px;padding:0.6em;margin:0}
+#debugLog .err{color:#ff8080}
+#debugLog .warn{color:#ffd27f}
 </style>
 </head>
 <body>
+
+<button id='debugToggleBtn' type='button'>Debug</button>
+<div id='debugPanel'>
+  <div id='debugToolbar'>
+    <button class='tbtn' id='debugCopyBtn' type='button'>Copy log</button>
+    <button class='tbtn' id='debugClearBtn' type='button'>Clear</button>
+    <button class='tbtn' id='debugCloseBtn' type='button'>Close</button>
+  </div>
+  <pre id='debugLog'></pre>
+</div>
 
 <div id='connectScreen'>
   <div class='stub'>
@@ -63,6 +84,8 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
     <p style='font-size:0.8em'>On iPhone, Safari can't do this - use
       <a class='link' href='https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055' target='_blank' rel='noopener'>Bluefy</a>
       or WebBLE instead. Desktop/Android Chrome and Edge work directly.</p>
+    <p style='font-size:0.8em'>Tap <b>Debug</b> (top right) to see a live log of every BLE command/response, including raw
+      bytes - tap <b>Copy log</b> there any time to grab it for troubleshooting.</p>
   </div>
 </div>
 
@@ -87,6 +110,43 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
   var RX_UUID = '7a5a1001-0002-4b70-8f1a-9d6e9c9a2b10'; // write: commands in
   var TX_UUID = '7a5a1002-0002-4b70-8f1a-9d6e9c9a2b10'; // notify: JSON responses out
 
+  // ---- on-screen debug log (Bluefy has no easy devtools access, so this
+  // needs to be visible without a separate computer) ----
+  var debugLines = [];
+  var MAX_DEBUG_LINES = 1000;
+  var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+
+  function logDebug(msg, level) {
+    var ts = (((window.performance && performance.now) ? performance.now() : Date.now()) - t0) / 1000;
+    var line = '[' + ts.toFixed(3) + '] ' + msg;
+    debugLines.push({ text: line, level: level || 'info' });
+    if (debugLines.length > MAX_DEBUG_LINES) debugLines.shift();
+    if (level === 'error') console.error(line); else if (level === 'warn') console.warn(line); else console.log(line);
+    var el = document.getElementById('debugLog');
+    if (el) {
+      el.innerHTML = debugLines.map(function (l) {
+        return '<span class="' + (l.level === 'error' ? 'err' : l.level === 'warn' ? 'warn' : '') + '">' +
+          l.text.replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }) + '</span>';
+      }).join('\n');
+      el.scrollTop = el.scrollHeight;
+    }
+  }
+
+  function toHex(bytes) {
+    var parts = [];
+    for (var i = 0; i < bytes.length; i++) parts.push(bytes[i].toString(16).padStart(2, '0'));
+    return parts.join(' ');
+  }
+
+  function concatBytes(chunks) {
+    var total = 0;
+    for (var i = 0; i < chunks.length; i++) total += chunks[i].length;
+    var out = new Uint8Array(total);
+    var offset = 0;
+    for (var i = 0; i < chunks.length; i++) { out.set(chunks[i], offset); offset += chunks[i].length; }
+    return out;
+  }
+
   // ---- BLE transport: one command in flight at a time (queued), chunked
   // JSON responses reassembled from a request-id + sequence-numbered
   // indication stream. See BleServer.cpp's sendChunked() for the wire
@@ -110,17 +170,21 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
 
   BleLink.prototype.connect = function () {
     var self = this;
+    logDebug('connect: requesting device (service ' + SERVICE_UUID + ')...');
     return navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE_UUID] }] })
       .then(function (device) {
+        logDebug('connect: device chosen: ' + device.name + ' (id ' + device.id + ')');
         self.device = device;
         device.addEventListener('gattserverdisconnected', function () {
+          logDebug('gattserverdisconnected event fired', 'warn');
           self.connected = false;
           onDisconnected();
         });
         return device.gatt.connect();
       })
-      .then(function (server) { return server.getPrimaryService(SERVICE_UUID); })
+      .then(function (server) { logDebug('connect: GATT connected, fetching service...'); return server.getPrimaryService(SERVICE_UUID); })
       .then(function (service) {
+        logDebug('connect: service found, fetching characteristics...');
         return Promise.all([
           service.getCharacteristic(RX_UUID),
           service.getCharacteristic(TX_UUID)
@@ -129,26 +193,43 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
       .then(function (chars) {
         self.rxChar = chars[0];
         self.txChar = chars[1];
+        logDebug('connect: characteristics found, starting notifications/indications...');
         self.txChar.addEventListener('characteristicvaluechanged', function (e) { self._onNotify(e); });
         return self.txChar.startNotifications();
       })
-      .then(function () { self.connected = true; });
+      .then(function () {
+        self.connected = true;
+        logDebug('connect: done, ready');
+      });
   };
 
   BleLink.prototype._onNotify = function (e) {
     var value = e.target.value;
     var bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-    if (bytes.length < 3 || !this.pending) return;
+
+    if (bytes.length < 3) {
+      logDebug('BLE RX: malformed indication, only ' + bytes.length + ' byte(s) (need >=3 for header): ' + toHex(bytes), 'error');
+      return;
+    }
     var more = bytes[0] === 1;
     var respId = bytes[1];
     var seq = bytes[2];
-    var text = new TextDecoder('utf-8').decode(bytes.subarray(3));
+    var dataLen = bytes.length - 3;
+
+    if (!this.pending) {
+      logDebug('BLE RX: chunk arrived with nothing pending (reqId=' + respId + ' seq=' + seq +
+        ' more=' + (more ? 1 : 0) + ' ' + dataLen + ' bytes) - ignored: ' + toHex(bytes), 'warn');
+      return;
+    }
+
+    logDebug('BLE RX: reqId=' + respId + ' seq=' + seq + ' more=' + (more ? 1 : 0) + ' ' + dataLen +
+      ' bytes, expecting reqId=' + this.pending.reqId + ' seq=' + this.pending.expectedSeq +
+      ' | hex: ' + toHex(bytes));
 
     if (respId !== this.pending.reqId) {
       // Stale chunk from a previous/retried request, not corruption of the
       // one we're currently waiting on - drop it and keep waiting.
-      console.warn('BLE ignoring stale chunk: expected reqId ' + this.pending.reqId + ', got ' + respId +
-        ' (seq ' + seq + ', ' + text.length + ' bytes)');
+      logDebug('BLE RX: ignoring stale chunk (reqId mismatch)', 'warn');
       return;
     }
 
@@ -158,22 +239,24 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
       // chunk, not that the phone's app (e.g. Bluefy's WebView bridge)
       // relayed it intact. Reject instead of silently concatenating
       // corrupted data into something JSON.parse chokes on.
-      console.error('BLE chunk out of sequence for op "' + this.pending.op + '" (reqId ' + respId + '): expected seq ' +
-        this.pending.expectedSeq + ', got ' + seq + '. Buffer so far (' +
-        this.pending.buffer.length + ' bytes): ' + this.pending.buffer);
+      var receivedHex = toHex(concatBytes(this.pending.chunks));
+      logDebug('BLE RX: CHUNK OUT OF SEQUENCE for op "' + this.pending.op + '" (reqId ' + respId +
+        '): expected seq ' + this.pending.expectedSeq + ', got ' + seq +
+        '. Bytes received so far (' + this.pending.chunks.reduce(function (n, c) { return n + c.length; }, 0) +
+        '): ' + receivedHex, 'error');
       var reject = this.pending.reject;
       this.pending = null;
       reject(new Error('BLE response corrupted (chunk out of sequence)'));
       return;
     }
 
-    this.pending.buffer += text;
+    this.pending.chunks.push(bytes.slice(3)); // slice() copies - the underlying buffer may be reused after this handler returns
     this.pending.expectedSeq = (seq + 1) & 0xff;
     if (!more) {
       var resolve = this.pending.resolve;
-      var buf = this.pending.buffer;
+      var allBytes = concatBytes(this.pending.chunks);
       this.pending = null;
-      resolve(buf);
+      resolve(allBytes);
     }
   };
 
@@ -189,7 +272,7 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
   BleLink.prototype._sendWithRetry = function (op, params) {
     var self = this;
     return self._sendNow(op, params).catch(function (err) {
-      console.warn('BLE command "' + op + '" failed (' + err.message + '), retrying once...');
+      logDebug('BLE command "' + op + '" failed (' + err.message + '), retrying once...', 'warn');
       return delay(300).then(function () { return self._sendNow(op, params); });
     });
   };
@@ -200,20 +283,28 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
       if (!self.connected) { reject(new Error('Not connected')); return; }
       var reqId = self.nextReqId;
       self.nextReqId = (self.nextReqId + 1) & 0xff;
-      self.pending = { resolve: resolve, reject: reject, buffer: '', expectedSeq: 0, op: op, reqId: reqId };
+      self.pending = { resolve: resolve, reject: reject, chunks: [], expectedSeq: 0, op: op, reqId: reqId };
       var cmd = 'op=' + encodeURIComponent(op) + '&_id=' + reqId;
       for (var k in (params || {})) {
         if (Object.prototype.hasOwnProperty.call(params, k)) {
           cmd += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
         }
       }
+      logDebug('BLE TX: reqId=' + reqId + ' op=' + op + ' cmd="' + cmd + '"');
       var enc = new TextEncoder().encode(cmd);
-      self.rxChar.writeValue(enc).catch(function (err) { self.pending = null; reject(err); });
-    }).then(function (raw) {
+      self.rxChar.writeValue(enc).catch(function (err) {
+        logDebug('BLE TX: writeValue failed: ' + err.message, 'error');
+        self.pending = null;
+        reject(err);
+      });
+    }).then(function (allBytes) {
+      var raw = new TextDecoder('utf-8').decode(allBytes);
       try {
         return JSON.parse(raw);
       } catch (err) {
-        console.error('BLE JSON parse failed for op "' + op + '". Raw response (' + raw.length + ' bytes): ' + raw);
+        logDebug('BLE JSON parse FAILED for op "' + op + '": ' + err.message, 'error');
+        logDebug('  decoded string (' + raw.length + ' chars): ' + raw, 'error');
+        logDebug('  raw bytes (' + allBytes.length + '): ' + toHex(allBytes), 'error');
         throw err;
       }
     });
@@ -241,7 +332,7 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
     return function () { clearTimeout(t); var args = arguments; t = setTimeout(function () { fn.apply(null, args); }, ms); };
   }
   function showError(err) {
-    console.error(err);
+    logDebug('ERROR: ' + ((err && err.stack) || (err && err.message) || String(err)), 'error');
     var el = qs('#connectError');
     if (el) el.textContent = (err && err.message) || String(err);
   }
@@ -573,7 +664,9 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
 
   qs('#connectBtn').addEventListener('click', function () {
     qs('#connectError').textContent = '';
+    logDebug('=== Connect button tapped ===');
     if (!navigator.bluetooth) {
+      logDebug('navigator.bluetooth is undefined - this browser has no Web Bluetooth support', 'error');
       qs('#connectError').textContent = "This browser doesn't support Web Bluetooth.";
       return;
     }
@@ -591,10 +684,42 @@ h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
       state.effectParams = params;
       qs('#connectScreen').style.display = 'none';
       qs('#app').style.display = 'block';
+      logDebug('=== Connected and loaded initial state ===');
       loadTab('effects');
       scheduleStatusPoll();
     }).catch(showError);
   });
+
+  // ---- debug panel wiring ----
+
+  qs('#debugToggleBtn').addEventListener('click', function () {
+    qs('#debugPanel').classList.toggle('open');
+  });
+  qs('#debugCloseBtn').addEventListener('click', function () {
+    qs('#debugPanel').classList.remove('open');
+  });
+  qs('#debugClearBtn').addEventListener('click', function () {
+    debugLines = [];
+    qs('#debugLog').textContent = '';
+  });
+  qs('#debugCopyBtn').addEventListener('click', function () {
+    var text = debugLines.map(function (l) { return l.text; }).join('\n');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text)
+        .then(function () { logDebug('(log copied to clipboard)'); })
+        .catch(function (err) { logDebug('clipboard copy failed: ' + err.message + ' - select the text manually instead', 'warn'); });
+    } else {
+      var el = qs('#debugLog');
+      var range = document.createRange();
+      range.selectNodeContents(el);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      logDebug('clipboard API unavailable - log text selected, use your browser\'s copy action', 'warn');
+    }
+  });
+
+  logDebug('Page loaded. navigator.bluetooth available: ' + (!!navigator.bluetooth));
 })();
 </script>
 </body>
