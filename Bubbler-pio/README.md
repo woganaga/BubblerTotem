@@ -46,7 +46,7 @@ sketch at `../BubblerIno`, which is no longer the active codebase.
   characteristic for chunked JSON responses) exposes the full control
   surface — effects, palettes, presets, categories, mic calibration, WiFi
   on/off — to the standalone Web Bluetooth app at
-  [`docs/index.html`](docs/index.html) (meant to be published somewhere
+  [`../docs/index.html`](../docs/index.html) (meant to be published somewhere
   HTTPS, e.g. GitHub Pages — Web Bluetooth requires a secure context and
   doesn't work from the device's own plain-HTTP page). **Safari on iOS/macOS
   does not support Web Bluetooth at all** (Apple's stated position, not a
@@ -94,9 +94,11 @@ turned off since) has to be over USB.
 
 ## Setting up the Bluetooth app
 
-`docs/index.html` is a standalone static page — it isn't served by the
-device. Publish it somewhere HTTPS (Web Bluetooth requires that) and
-bookmark it on your phone/laptop:
+`../docs/index.html` (at the repo root, a sibling of this `Bubbler-pio`
+folder — GitHub Pages' "/docs" option is relative to the repo root, not any
+subfolder) is a standalone static page — it isn't served by the device.
+Publish it somewhere HTTPS (Web Bluetooth requires that) and bookmark it on
+your phone/laptop:
 
 1. GitHub repo → **Settings → Pages** → Source: "Deploy from a branch" →
    branch `main`, folder `/docs` → Save.
@@ -109,9 +111,9 @@ bookmark it on your phone/laptop:
 ## Project layout
 
 ```
+../docs/index.html   standalone Web Bluetooth app, at the repo root (publish via GitHub Pages)
 platformio.ini       build config (board, pioarduino platform, lib_deps)
 partitions.csv        8MB flash partition table (dual OTA app slots + LittleFS)
-docs/index.html      standalone Web Bluetooth app (publish via GitHub Pages)
 src/
   main.cpp            setup()/loop()
   Rings.*              LED buffer, ring addressing, brightness caps
