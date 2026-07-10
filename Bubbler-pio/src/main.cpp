@@ -7,6 +7,7 @@
 #include "EffectManager.h"
 #include "WifiSetup.h"
 #include "WebUI.h"
+#include "BleServer.h"
 #include "OTAUpdate.h"
 #include "AudioInput.h"
 
@@ -16,8 +17,9 @@ void setup() {
   presetStoreInit();
   effectManagerInit();
   ringsInit();
-  wifiInit();
+  wifiInit();  // off by default; BLE (below) is the primary interface
   webUIInit();
+  bleServerInit();
   otaInit();
   audioInit();
 }

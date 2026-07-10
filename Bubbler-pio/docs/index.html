@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1, viewport-fit=cover'>
+<title>Bubbler Totem (BLE)</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#111;color:#eee;-webkit-tap-highlight-color:transparent}
+#statusbar{position:sticky;top:0;z-index:10;display:flex;align-items:center;justify-content:center;gap:0.5em;padding:calc(0.6em + env(safe-area-inset-top)) 1em 0.6em;background:#1a1a1a;border-bottom:1px solid #2a2a2a;font-size:0.95em}
+#statusbar #sbDot{width:0.6em;height:0.6em;border-radius:50%;background:#555;flex-shrink:0}
+#statusbar #sbDot.on{background:#4caf50}
+#statusbar #sbBpm{color:#999}
+#content{padding:1em 1em calc(5.5em + env(safe-area-inset-bottom));max-width:480px;margin:0 auto}
+#tabbar{position:fixed;left:0;right:0;bottom:0;z-index:10;display:flex;background:#1a1a1a;border-top:1px solid #2a2a2a;padding-bottom:env(safe-area-inset-bottom)}
+#tabbar button{flex:1;background:none;border:none;color:#999;font-size:0.7em;padding:0.6em 0;display:flex;flex-direction:column;align-items:center;gap:0.15em;cursor:pointer;font-family:inherit}
+#tabbar button .ic{font-size:1.3em;line-height:1}
+#tabbar button.active{color:#4caf50}
+h1,h2{margin:0.3em 0 0.6em;font-size:1.1em;color:#ccc}
+a.button,button.button{display:block;width:100%;margin:0.4em 0;padding:0.8em;min-height:44px;border-radius:10px;background:#262626;color:#fff;text-decoration:none;font-size:1em;border:none;text-align:center;font-family:inherit}
+a.button.active,button.button.active{background:#4caf50}
+form{margin:0.8em 0}
+form label{display:block;margin:0.8em 0;font-size:0.9em;color:#ccc}
+input[type=range],input[type=text],select{width:100%;margin-top:0.3em}
+input[type=color]{width:2.2em;height:2.2em;border:none;margin:0.2em;padding:0;background:none}
+input[type=submit],.tbtn{min-height:40px;padding:0.6em 1.2em;border-radius:8px;background:#333;color:#fff;border:none;font-size:0.95em;cursor:pointer;font-family:inherit}
+input[type=submit]{width:100%;margin-top:0.6em;background:#4caf50}
+.link{color:#8cf;text-decoration:none;display:inline-block;margin:0.3em 0}
+#vu{width:100%;height:20px;background:#262626;border-radius:4px;margin:0.6em 0;overflow:hidden}
+#vuBar{height:100%;width:0%;background:#4caf50}
+#beatDot{width:20px;height:20px;border-radius:50%;background:#262626;margin:0.4em auto}
+#beatDot.on{background:#ff5252}
+.band{width:100%;height:14px;background:#262626;border-radius:4px;margin:0.3em 0;overflow:hidden}
+.band>span{display:block;height:100%;width:0%}
+#bassBar{background:#ff5252}#midBar{background:#4caf50}#trebBar{background:#8cf}
+#bpmReadout{font-size:1.6em;margin:0.2em 0}#confReadout{color:#999;font-size:0.85em}
+.tempoRow{display:flex;gap:0.5em;margin:0.6em 0}
+.tempoRow .tbtn{flex:1}
+.swatches{display:flex;gap:0.25em;flex-wrap:wrap}
+.swatches span{width:1.5em;height:1.5em;border-radius:4px;display:inline-block;border:1px solid #444}
+.row{margin:0.5em 0;padding:0.6em;background:#1c1c1c;border-radius:10px;display:flex;align-items:center;gap:0.5em}
+.row.active{outline:2px solid #4caf50}
+.row>div:first-child{flex:1;min-width:0}
+.row small{color:#999}
+.stub{color:#999;text-align:center;padding:2em 1em;line-height:1.5}
+section+section,h2{margin-top:1.4em;padding-top:0.8em;border-top:1px solid #262626}
+h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
+#connectScreen{min-height:100%;display:flex;align-items:center;justify-content:center;padding:2em 1em}
+#connectScreen .stub{max-width:360px}
+#connectError{color:#ff5252;font-size:0.9em;min-height:1.2em}
+</style>
+</head>
+<body>
+
+<div id='connectScreen'>
+  <div class='stub'>
+    <h1 style='font-size:1.4em;color:#eee'>Bubbler Totem</h1>
+    <p>Control the totem directly over Bluetooth - no WiFi required.</p>
+    <button class='button' id='connectBtn'>Connect</button>
+    <p id='connectError'></p>
+    <p style='font-size:0.8em'>On iPhone, Safari can't do this - use
+      <a class='link' href='https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055' target='_blank' rel='noopener'>Bluefy</a>
+      or WebBLE instead. Desktop/Android Chrome and Edge work directly.</p>
+  </div>
+</div>
+
+<div id='app' style='display:none'>
+  <div id='statusbar'><span id='sbDot'></span><span id='sbEffect'>--</span><span id='sbBpm'></span></div>
+  <div id='content'></div>
+  <nav id='tabbar'>
+    <button data-tab='mode'><span class='ic'>&#127899;</span>Mode</button>
+    <button data-tab='effects'><span class='ic'>&#10024;</span>Effects</button>
+    <button data-tab='saved'><span class='ic'>&#11088;</span>Saved</button>
+    <button data-tab='palettes'><span class='ic'>&#127912;</span>Palettes</button>
+    <button data-tab='settings'><span class='ic'>&#9881;</span>Settings</button>
+  </nav>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // Must match BleServer.cpp exactly.
+  var SERVICE_UUID = '7a5a1000-0002-4b70-8f1a-9d6e9c9a2b10';
+  var RX_UUID = '7a5a1001-0002-4b70-8f1a-9d6e9c9a2b10'; // write: commands in
+  var TX_UUID = '7a5a1002-0002-4b70-8f1a-9d6e9c9a2b10'; // notify: JSON responses out
+
+  // ---- BLE transport: one command in flight at a time (queued), chunked
+  // JSON responses reassembled from a 1-byte-prefixed notification stream ----
+  var BleLink = function () {
+    this.device = null;
+    this.rxChar = null;
+    this.txChar = null;
+    this.connected = false;
+    this.pending = null;
+    this.queue = Promise.resolve();
+  };
+
+  BleLink.prototype.connect = function () {
+    var self = this;
+    return navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE_UUID] }] })
+      .then(function (device) {
+        self.device = device;
+        device.addEventListener('gattserverdisconnected', function () {
+          self.connected = false;
+          onDisconnected();
+        });
+        return device.gatt.connect();
+      })
+      .then(function (server) { return server.getPrimaryService(SERVICE_UUID); })
+      .then(function (service) {
+        return Promise.all([
+          service.getCharacteristic(RX_UUID),
+          service.getCharacteristic(TX_UUID)
+        ]);
+      })
+      .then(function (chars) {
+        self.rxChar = chars[0];
+        self.txChar = chars[1];
+        self.txChar.addEventListener('characteristicvaluechanged', function (e) { self._onNotify(e); });
+        return self.txChar.startNotifications();
+      })
+      .then(function () { self.connected = true; });
+  };
+
+  BleLink.prototype._onNotify = function (e) {
+    var value = e.target.value;
+    var bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    if (bytes.length === 0) return;
+    var more = bytes[0] === 1;
+    var text = new TextDecoder('utf-8').decode(bytes.subarray(1));
+    if (!this.pending) return;
+    this.pending.buffer += text;
+    if (!more) {
+      var resolve = this.pending.resolve;
+      var buf = this.pending.buffer;
+      this.pending = null;
+      resolve(buf);
+    }
+  };
+
+  BleLink.prototype.send = function (op, params) {
+    var self = this;
+    this.queue = this.queue.then(function () { return self._sendNow(op, params); });
+    return this.queue;
+  };
+
+  BleLink.prototype._sendNow = function (op, params) {
+    var self = this;
+    return new Promise(function (resolve, reject) {
+      if (!self.connected) { reject(new Error('Not connected')); return; }
+      self.pending = { resolve: resolve, buffer: '' };
+      var cmd = 'op=' + encodeURIComponent(op);
+      for (var k in (params || {})) {
+        if (Object.prototype.hasOwnProperty.call(params, k)) {
+          cmd += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
+        }
+      }
+      var enc = new TextEncoder().encode(cmd);
+      self.rxChar.writeValue(enc).catch(function (err) { self.pending = null; reject(err); });
+    }).then(function (raw) { return JSON.parse(raw); });
+  };
+
+  var link = new BleLink();
+
+  // ---- app state (populated from BLE responses; render() reads from this) ----
+  var state = {
+    meta: null, status: null, effectParams: null,
+    palettes: [], categories: [], presets: [], micSettings: null, wifi: null,
+    editingPalette: null
+  };
+  var currentTab = null;
+
+  function qs(sel, root) { return (root || document).querySelector(sel); }
+  function qsa(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function debounce(fn, ms) {
+    var t;
+    return function () { clearTimeout(t); var args = arguments; t = setTimeout(function () { fn.apply(null, args); }, ms); };
+  }
+  function showError(err) {
+    console.error(err);
+    var el = qs('#connectError');
+    if (el) el.textContent = (err && err.message) || String(err);
+  }
+
+  // ---- render functions (build markup from `state`; mirrors WebUI.cpp's fragments) ----
+
+  function renderMode() {
+    return "<h1>Mode</h1><div class='stub'>Category-based show mode and an audio-reactive " +
+      "toggle are coming soon here. For now, use the Effects tab to run and tweak one effect " +
+      "at a time, or Saved Effects to jump between presets.</div>";
+  }
+
+  function renderEffectParamsForm() {
+    if (!state.effectParams || state.status.effectId === 0) return '';
+    var info = state.meta.effects[state.status.effectId];
+    var p = state.effectParams;
+    var html = "<form data-live='setEffectParams'><h2>" + escapeHtml(info.name) + " settings</h2>";
+
+    html += "<label>Palette <select name='paletteId'>";
+    html += "<option value='none'" + (p.paletteId === -1 ? " selected" : "") + ">(Custom / unlinked)</option>";
+    state.palettes.forEach(function (pal) {
+      html += "<option value='" + pal.id + "'" + (pal.id === p.paletteId ? " selected" : "") + ">" + escapeHtml(pal.name) + "</option>";
+    });
+    html += "</select></label>";
+    html += "<div class='swatches'>" + p.paletteColors.map(function (c) { return "<span style='background:" + c + "'></span>"; }).join('') + "</div>";
+
+    html += "<label>Speed <input type='range' name='speed' min='1' max='100' value='" + p.speed + "'></label>";
+    html += "<label>Intensity <input type='range' name='intensity' min='1' max='100' value='" + p.intensity + "'></label>";
+
+    if (info.width) {
+      html += "<label>Width <select name='width'>";
+      for (var w = 1; w <= 3; w++) html += "<option value='" + w + "'" + (w === p.width ? " selected" : "") + ">" + w + "</option>";
+      html += "</select></label>";
+    }
+    if (info.twists) html += "<label>Twists <input type='range' name='twists' min='1' max='10' value='" + p.twists + "'></label>";
+    if (info.rows) html += "<label>Rows <input type='range' name='rows' min='1' max='6' value='" + p.rows + "'></label>";
+    if (info.overlap) html += "<label>Overlap <input type='range' name='overlap' min='1' max='100' value='" + p.overlap + "'></label>";
+    if (info.dualChase) html += "<label><input type='checkbox' name='dualChase' value='1'" + (p.dualChase ? " checked" : "") + "> Dual chase (start from both ends)</label>";
+
+    if (info.count) html += "<label>" + escapeHtml(info.count.label) + " <input type='range' name='elemcount' min='1' max='" + info.count.max + "' value='" + p.count + "'></label>";
+    if (info.style) html += "<label>" + escapeHtml(info.style.label) + " <input type='range' name='style' min='" + info.style.min + "' max='" + info.style.max + "' value='" + p.style + "'></label>";
+    if (info.density) html += "<label>" + escapeHtml(info.density.label) + " <input type='range' name='density' min='1' max='" + info.density.max + "' value='" + p.density + "'></label>";
+    if (info.thickness) html += "<label>" + escapeHtml(info.thickness) + " <input type='range' name='thickness' min='0' max='100' value='" + p.thickness + "'></label>";
+    if (info.twist) html += "<label>" + escapeHtml(info.twist) + " <input type='range' name='twist' min='-360' max='360' value='" + p.twistDeg + "'></label>";
+    if (info.flag) html += "<label><input type='checkbox' name='flag' value='1'" + (p.flag ? " checked" : "") + "> " + escapeHtml(info.flag) + "</label>";
+    if (info.flag2) html += "<label><input type='checkbox' name='flag2' value='1'" + (p.flag2 ? " checked" : "") + "> " + escapeHtml(info.flag2) + "</label>";
+
+    if (info.dir) {
+      html += "<label>Direction <select name='direction'>";
+      info.dir.forEach(function (d) {
+        html += "<option value='" + d[1] + "'" + (d[1] === p.direction ? " selected" : "") + ">" + escapeHtml(d[0]) + "</option>";
+      });
+      html += "</select></label>";
+    }
+    html += "</form>";
+    return html;
+  }
+
+  function renderSaveEffectForm() {
+    if (!state.status || state.status.effectId === 0) return '';
+    var current = state.status.presetId !== -1 ? state.presets.filter(function (x) { return x.id === state.status.presetId; })[0] : null;
+    var html = "<form data-save='saveEffect'><h2>Save this configuration</h2>";
+    if (current) html += "<input type='hidden' name='id' value='" + current.id + "'>";
+    html += "<label>Name <input type='text' name='name' maxlength='23' value='" + escapeHtml(current ? current.name : '') + "' required></label>";
+    html += "<label>Category <select name='categoryId'><option value=''>(none)</option>";
+    state.categories.forEach(function (c) {
+      html += "<option value='" + c.id + "'" + (current && current.categoryId === c.id ? " selected" : "") + ">" + escapeHtml(c.name) + "</option>";
+    });
+    html += "</select></label>";
+    html += "<label>Or new category <input type='text' name='newCategory' maxlength='23' placeholder='e.g. Party'></label>";
+    html += "<input type='submit' value='" + (current ? 'Update saved effect' : 'Save as new') + "'>";
+    html += "</form>";
+    return html;
+  }
+
+  function renderEffects() {
+    var html = "<h1>Effects</h1>";
+    if (state.meta) {
+      state.meta.effects.forEach(function (e) {
+        var active = state.status && e.id === state.status.effectId;
+        html += "<button class='button" + (active ? " active" : "") + "' data-activate-effect='" + e.id + "'>" + escapeHtml(e.name) + "</button>";
+      });
+    }
+    html += renderEffectParamsForm();
+    html += renderSaveEffectForm();
+    return html;
+  }
+
+  function renderSaved() {
+    var html = "<h1>Saved Effects</h1>";
+    if (state.presets.length === 0) html += "<div class='stub'>No saved effects yet. Configure one on the Effects tab and save it.</div>";
+    state.presets.forEach(function (pr) {
+      var active = state.status && pr.id === state.status.presetId;
+      html += "<div class='row" + (active ? " active" : "") + "'><div>";
+      html += "<strong>" + escapeHtml(pr.name) + "</strong><br>";
+      html += "<small>" + escapeHtml(pr.effectName) + (pr.categoryName ? " &middot; " + escapeHtml(pr.categoryName) : "") + "</small></div>";
+      html += "<button class='tbtn' data-activate-preset='" + pr.id + "' data-goto-tab='effects'>Activate</button>";
+      html += "<button class='tbtn' data-delete-preset='" + pr.id + "' data-confirm='Delete this saved effect?'>Delete</button>";
+      html += "</div>";
+    });
+    return html;
+  }
+
+  function renderPalettes() {
+    var html = "<h1>Palettes</h1>";
+    state.palettes.forEach(function (np) {
+      html += "<div class='row'><div><div class='swatches'>" + np.colors.map(function (c) { return "<span style='background:" + c + "'></span>"; }).join('') + "</div>" + escapeHtml(np.name) + "</div>";
+      html += "<button class='tbtn' data-edit-palette='" + np.id + "'>Edit</button>";
+      html += "<button class='tbtn' data-delete-palette='" + np.id + "' data-confirm='Delete this palette?'>Delete</button>";
+      html += "</div>";
+    });
+
+    var editing = state.editingPalette;
+    html += "<h2>" + (editing ? 'Edit palette' : 'New palette') + "</h2>";
+    html += "<form data-save='savePalette'>";
+    if (editing) html += "<input type='hidden' name='id' value='" + editing.id + "'>";
+    html += "<label>Name <input type='text' name='name' maxlength='23' value='" + escapeHtml(editing ? editing.name : '') + "' required></label>";
+    var count = editing ? editing.count : 3;
+    html += "<label>Colors <select name='count'>";
+    for (var c = 1; c <= 10; c++) html += "<option value='" + c + "'" + (c === count ? " selected" : "") + ">" + c + "</option>";
+    html += "</select></label><label>";
+    for (var i = 0; i < 10; i++) {
+      var col = (editing && i < editing.count) ? editing.colors[i] : '#000000';
+      html += "<input type='color' name='c" + i + "' value='" + col + "'>";
+    }
+    html += "</label><input type='submit' value='" + (editing ? 'Update' : 'Create') + "'></form>";
+    return html;
+  }
+
+  function renderSettings() {
+    var s = state.micSettings || { gain: 50, noiseFloor: 10, beatThreshold: 150, beatDebounce: 150 };
+    var html = "<h1>Settings</h1><h2>Mic Calibration</h2>";
+    html += "<div id='vu'><div id='vuBar'></div></div><div id='beatDot'></div>";
+    html += "<div class='band'><span id='bassBar'></span></div><small>Bass</small>";
+    html += "<div class='band'><span id='midBar'></span></div><small>Mid</small>";
+    html += "<div class='band'><span id='trebBar'></span></div><small>Treble</small>";
+    html += "<div id='bpmReadout'>-- BPM</div><div id='confReadout'>lock: --</div>";
+    html += "<div class='tempoRow'>";
+    html += "<button class='tbtn' data-mic-nudge='-1'>&divide;2</button>";
+    html += "<button class='tbtn' data-mic-tap='1'>TAP</button>";
+    html += "<button class='tbtn' data-mic-nudge='1'>&times;2</button>";
+    html += "</div>";
+    html += "<form data-live='setMicParams' data-save='saveMicSettings'>";
+    html += "<label>Sensitivity <input type='range' name='gain' min='1' max='100' value='" + s.gain + "'></label>";
+    html += "<label>Noise Floor <input type='range' name='noiseFloor' min='0' max='100' value='" + s.noiseFloor + "'></label>";
+    html += "<label>Beat Threshold % <input type='range' name='beatThreshold' min='110' max='400' value='" + s.beatThreshold + "'></label>";
+    html += "<label>Beat Debounce (ms) <input type='range' name='beatDebounce' min='30' max='500' value='" + s.beatDebounce + "'></label>";
+    html += "<input type='submit' value='Apply (save to flash)'></form>";
+
+    var w = state.wifi || { enabled: false, connected: false, ip: null };
+    html += "<h2>WiFi</h2>";
+    html += "<div class='row'><div>WiFi is " + (w.enabled ? (w.connected ? "on &middot; connected" + (w.ip ? " (" + w.ip + ")" : "") : "on &middot; connecting&hellip;") : "off") + "</div>";
+    html += "<button class='tbtn' data-toggle-wifi='" + (w.enabled ? 0 : 1) + "'>" + (w.enabled ? 'Turn off' : 'Turn on') + "</button></div>";
+    html += "<div class='stub'>Turn WiFi on to reach the totem's own web page for a firmware update - that option only shows up there, not here over BLE.</div>";
+    return html;
+  }
+
+  function render(tab) {
+    var fn = { mode: renderMode, effects: renderEffects, saved: renderSaved, palettes: renderPalettes, settings: renderSettings }[tab];
+    qs('#content').innerHTML = fn ? fn() : '';
+    wireContent();
+  }
+
+  // ---- generic event wiring for whatever the current render() produced ----
+
+  function formToParams(form) {
+    var params = {};
+    new FormData(form).forEach(function (v, k) { params[k] = v; });
+    return params;
+  }
+
+  function wireContent() {
+    var content = qs('#content');
+
+    qsa('form', content).forEach(function (form) {
+      var liveOp = form.getAttribute('data-live');
+      var saveOp = form.getAttribute('data-save');
+      if (liveOp) {
+        var send = debounce(function () { link.send(liveOp, formToParams(form)).catch(showError); }, 80);
+        form.addEventListener('input', send);
+        form.addEventListener('change', send);
+      }
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var op = saveOp || liveOp;
+        if (!op) return;
+        link.send(op, formToParams(form)).then(function () {
+          if (op === 'saveEffect') {
+            return Promise.all([reloadCategories(), reloadPresets()]).then(function () {
+              return link.send('status', {});
+            }).then(function (st) { state.status = st; render('effects'); });
+          } else if (op === 'savePalette') {
+            return reloadPalettes().then(function () { state.editingPalette = null; render('palettes'); });
+          } else if (op === 'saveMicSettings') {
+            render('settings');
+          }
+        }).then(refreshStatus).catch(showError);
+      });
+    });
+
+    qsa('[data-activate-effect]', content).forEach(function (el) {
+      el.addEventListener('click', function () {
+        link.send('activateEffect', { effect: el.dataset.activateEffect }).then(function (params) {
+          state.effectParams = params;
+          state.status = state.status || {};
+          state.status.effectId = params.effectId;
+          state.status.presetId = -1;
+          render('effects');
+          refreshStatus();
+        }).catch(showError);
+      });
+    });
+
+    qsa('[data-activate-preset]', content).forEach(function (el) {
+      el.addEventListener('click', function () {
+        var gotoTab = el.dataset.gotoTab || currentTab;
+        link.send('activatePreset', { id: el.dataset.activatePreset }).then(function (params) {
+          state.effectParams = params;
+          return link.send('status', {});
+        }).then(function (st) {
+          state.status = st;
+          currentTab = gotoTab;
+          qsa('#tabbar button').forEach(function (b) { b.classList.toggle('active', b.dataset.tab === gotoTab); });
+          render(gotoTab);
+          refreshStatus();
+        }).catch(showError);
+      });
+    });
+
+    qsa('[data-delete-preset]', content).forEach(function (el) {
+      el.addEventListener('click', function () {
+        if (el.dataset.confirm && !confirm(el.dataset.confirm)) return;
+        link.send('deletePreset', { id: el.dataset.deletePreset }).then(reloadPresets).then(function () { render('saved'); }).catch(showError);
+      });
+    });
+
+    qsa('[data-delete-palette]', content).forEach(function (el) {
+      el.addEventListener('click', function () {
+        if (el.dataset.confirm && !confirm(el.dataset.confirm)) return;
+        link.send('deletePalette', { id: el.dataset.deletePalette }).then(reloadPalettes).then(function () { render('palettes'); }).catch(showError);
+      });
+    });
+
+    qsa('[data-edit-palette]', content).forEach(function (el) {
+      el.addEventListener('click', function () {
+        var id = Number(el.dataset.editPalette);
+        state.editingPalette = state.palettes.filter(function (p) { return p.id === id; })[0] || null;
+        render('palettes');
+      });
+    });
+
+    qsa('[data-toggle-wifi]', content).forEach(function (el) {
+      el.addEventListener('click', function () {
+        link.send('setWifi', { enabled: el.dataset.toggleWifi }).then(function (w) { state.wifi = w; render('settings'); }).catch(showError);
+      });
+    });
+
+    qsa('[data-mic-tap]', content).forEach(function (el) {
+      el.addEventListener('click', function () { link.send('micTap', {}).catch(showError); });
+    });
+    qsa('[data-mic-nudge]', content).forEach(function (el) {
+      el.addEventListener('click', function () { link.send('micNudge', { dir: el.dataset.micNudge }).catch(showError); });
+    });
+  }
+
+  // ---- tab switching + cached-list refreshers ----
+
+  function reloadPresets() { return link.send('listPresets', {}).then(function (r) { state.presets = r.presets; }); }
+  function reloadPalettes() { return link.send('listPalettes', {}).then(function (r) { state.palettes = r.palettes; }); }
+  function reloadCategories() { return link.send('listCategories', {}).then(function (r) { state.categories = r.categories; }); }
+
+  function loadTab(name) {
+    currentTab = name;
+    qsa('#tabbar button').forEach(function (b) { b.classList.toggle('active', b.dataset.tab === name); });
+
+    var ready;
+    if (name === 'effects') {
+      ready = link.send('effectParams', {}).then(function (p) { state.effectParams = p; });
+    } else if (name === 'settings') {
+      ready = Promise.all([
+        link.send('micSettings', {}).then(function (s) { state.micSettings = s; }),
+        link.send('getWifi', {}).then(function (w) { state.wifi = w; })
+      ]);
+    } else {
+      ready = Promise.resolve();
+    }
+    ready.then(function () { render(name); }).catch(showError);
+  }
+
+  qsa('#tabbar button').forEach(function (b) {
+    b.addEventListener('click', function () { loadTab(b.dataset.tab); });
+  });
+
+  // ---- status polling (compact status bar always; fast meters on Settings) ----
+
+  function refreshStatus() {
+    return link.send('status', {}).then(function (d) {
+      state.status = d;
+      qs('#sbEffect').textContent = d.presetName || d.effectName || '--';
+      qs('#sbBpm').textContent = d.bpm > 0 ? (Math.round(d.bpm) + ' BPM') : '';
+      qs('#sbDot').classList.toggle('on', d.beat);
+
+      var vu = document.getElementById('vuBar'); if (vu) vu.style.width = (d.level * 100) + '%';
+      var bd = document.getElementById('beatDot'); if (bd) bd.className = d.beat ? 'on' : '';
+      var bb = document.getElementById('bassBar'); if (bb) bb.style.width = (d.bass * 100) + '%';
+      var mb = document.getElementById('midBar'); if (mb) mb.style.width = (d.mid * 100) + '%';
+      var tb = document.getElementById('trebBar'); if (tb) tb.style.width = (d.treble * 100) + '%';
+      var bpmEl = document.getElementById('bpmReadout'); if (bpmEl) bpmEl.textContent = (d.bpm > 0 ? Math.round(d.bpm) : '--') + ' BPM';
+      var confEl = document.getElementById('confReadout'); if (confEl) confEl.textContent = 'lock: ' + Math.round(d.conf * 100) + '%';
+    }).catch(function () {});
+  }
+
+  var pollTimer = null;
+  function scheduleStatusPoll() {
+    refreshStatus().then(function () {
+      if (!link.connected) return;
+      pollTimer = setTimeout(scheduleStatusPoll, currentTab === 'settings' ? 250 : 1000);
+    });
+  }
+
+  // ---- connect / disconnect flow ----
+
+  function onDisconnected() {
+    if (pollTimer) clearTimeout(pollTimer);
+    qs('#app').style.display = 'none';
+    qs('#connectScreen').style.display = 'flex';
+    qs('#connectError').textContent = 'Disconnected. Tap Connect to reconnect.';
+  }
+
+  qs('#connectBtn').addEventListener('click', function () {
+    qs('#connectError').textContent = '';
+    if (!navigator.bluetooth) {
+      qs('#connectError').textContent = "This browser doesn't support Web Bluetooth.";
+      return;
+    }
+    link.connect().then(function () {
+      return link.send('meta', {});
+    }).then(function (meta) {
+      state.meta = meta;
+      return Promise.all([reloadPalettes(), reloadCategories(), reloadPresets()]);
+    }).then(function () {
+      return link.send('status', {});
+    }).then(function (st) {
+      state.status = st;
+      return link.send('effectParams', {});
+    }).then(function (params) {
+      state.effectParams = params;
+      qs('#connectScreen').style.display = 'none';
+      qs('#app').style.display = 'block';
+      loadTab('effects');
+      scheduleStatusPoll();
+    }).catch(showError);
+  });
+})();
+</script>
+</body>
+</html>
