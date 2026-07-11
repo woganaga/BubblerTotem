@@ -1,0 +1,25 @@
+{
+  // Multi-root workspace: the whole repo, plus WLED-MM as its own root so
+  // the PlatformIO extension detects the firmware project (it looks for
+  // platformio.ini at a workspace folder root).
+  "folders": [
+    {
+      "name": "BubblerTotem",
+      "path": "."
+    },
+    {
+      "name": "WLED-MM (firmware)",
+      "path": "WLED-MM"
+    }
+  ],
+  "settings": {
+    "files.exclude": {
+      "**/.pio": true,
+      "**/__pycache__": true
+    },
+    "search.exclude": {
+      "**/.pio": true,
+      "archive/**": true
+    }
+  }
+}

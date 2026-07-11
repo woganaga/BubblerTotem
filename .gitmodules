@@ -1,0 +1,4 @@
+[submodule "WLED-MM"]
+	path = WLED-MM
+	url = https://github.com/woganaga/WLED-MM.git
+	branch = bubbler
