@@ -3,916 +3,157 @@
 <head>
 <meta charset='utf-8'>
 <meta name='viewport' content='width=device-width, initial-scale=1, viewport-fit=cover'>
-<title>Bubbler Totem (BLE)</title>
+<title>Bubbler Totem</title>
 <style>
 :root{color-scheme:dark}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#111;color:#eee;-webkit-tap-highlight-color:transparent}
-#statusbar{position:sticky;top:0;z-index:10;display:flex;align-items:center;justify-content:center;gap:0.5em;padding:calc(0.6em + env(safe-area-inset-top)) 1em 0.6em;background:#1a1a1a;border-bottom:1px solid #2a2a2a;font-size:0.95em}
-#statusbar #sbDot{width:0.6em;height:0.6em;border-radius:50%;background:#555;flex-shrink:0}
-#statusbar #sbDot.on{background:#4caf50}
-#statusbar #sbBpm{color:#999}
-#sbPulse{width:0.6em;height:0.6em;border-radius:50%;background:#e6a23c;flex-shrink:0;opacity:0.35;display:none}
-#sbPulse.locked{background:#4caf50}
-@keyframes sbpulse{0%{transform:scale(1.6);opacity:1}35%{transform:scale(1);opacity:0.35}100%{transform:scale(1);opacity:0.35}}
-#sbSync{color:#4caf50;font-size:0.85em}
-#sbSync.wait{color:#999}
-#content{padding:1em 1em calc(5.5em + env(safe-area-inset-bottom));max-width:480px;margin:0 auto}
-#tabbar{position:fixed;left:0;right:0;bottom:0;z-index:10;display:flex;background:#1a1a1a;border-top:1px solid #2a2a2a;padding-bottom:env(safe-area-inset-bottom)}
-#tabbar button{flex:1;background:none;border:none;color:#999;font-size:0.7em;padding:0.6em 0;display:flex;flex-direction:column;align-items:center;gap:0.15em;cursor:pointer;font-family:inherit}
-#tabbar button .ic{font-size:1.3em;line-height:1}
-#tabbar button.active{color:#4caf50}
-h1,h2{margin:0.3em 0 0.6em;font-size:1.1em;color:#ccc}
-a.button,button.button{display:block;width:100%;margin:0.4em 0;padding:0.8em;min-height:44px;border-radius:10px;background:#262626;color:#fff;text-decoration:none;font-size:1em;border:none;text-align:center;font-family:inherit}
-a.button.active,button.button.active{background:#4caf50}
-form{margin:0.8em 0}
-form label{display:block;margin:0.8em 0;font-size:0.9em;color:#ccc}
-input[type=range],input[type=text],select{width:100%;margin-top:0.3em}
-input[type=color]{width:2.2em;height:2.2em;border:none;margin:0.2em;padding:0;background:none}
-input[type=submit],.tbtn{min-height:40px;padding:0.6em 1.2em;border-radius:8px;background:#333;color:#fff;border:none;font-size:0.95em;cursor:pointer;font-family:inherit}
-input[type=submit]{width:100%;margin-top:0.6em;background:#4caf50}
-.tbtn.active{background:#4caf50}
-.link{color:#8cf;text-decoration:none;display:inline-block;margin:0.3em 0}
-#vu{width:100%;height:20px;background:#262626;border-radius:4px;margin:0.6em 0;overflow:hidden}
-#vuBar{height:100%;width:0%;background:#4caf50}
-#beatDot{width:20px;height:20px;border-radius:50%;background:#262626;margin:0.4em auto}
-#beatDot.on{background:#ff5252}
-.band{width:100%;height:14px;background:#262626;border-radius:4px;margin:0.3em 0;overflow:hidden}
-.band>span{display:block;height:100%;width:0%}
-#bassBar{background:#ff5252}#midBar{background:#4caf50}#trebBar{background:#8cf}
-#bpmReadout{font-size:1.6em;margin:0.2em 0}#confReadout{color:#999;font-size:0.85em}
-.tempoRow{display:flex;gap:0.5em;margin:0.6em 0}
-.tempoRow .tbtn{flex:1}
-.swatches{display:flex;gap:0.25em;flex-wrap:wrap}
-.swatches span{width:1.5em;height:1.5em;border-radius:4px;display:inline-block;border:1px solid #444}
-.row{margin:0.5em 0;padding:0.6em;background:#1c1c1c;border-radius:10px;display:flex;align-items:center;gap:0.5em}
-.row.active{outline:2px solid #4caf50}
-.row>div:first-child{flex:1;min-width:0}
-.row small{color:#999}
-.stub{color:#999;text-align:center;padding:2em 1em;line-height:1.5}
-section+section,h2{margin-top:1.4em;padding-top:0.8em;border-top:1px solid #262626}
-h1+*,h1{border-top:none;padding-top:0;margin-top:0.3em}
-#connectScreen{min-height:100%;display:flex;align-items:center;justify-content:center;padding:2em 1em}
-#connectScreen .stub{max-width:360px}
-#connectError{color:#ff5252;font-size:0.9em;min-height:1.2em}
-#debugToggleBtn{position:fixed;top:calc(0.5em + env(safe-area-inset-top));right:0.5em;z-index:30;
-  min-height:0;padding:0.4em 0.7em;font-size:0.75em;background:#333;color:#8f8;border:1px solid #444;border-radius:6px;opacity:0.85}
-#debugPanel{display:none;position:fixed;inset:0;z-index:25;background:#0a0a0a;padding:0.6em;
-  padding-top:calc(0.6em + env(safe-area-inset-top));flex-direction:column}
-#debugPanel.open{display:flex}
-#debugToolbar{display:flex;gap:0.4em;margin-bottom:0.5em;flex-shrink:0}
-#debugToolbar button{flex:1;min-height:36px;padding:0.4em;font-size:0.85em}
-#debugVerboseLabel,#debugRelayLabel{display:flex;align-items:center;gap:0.4em;font-size:0.8em;color:#ccc;margin-bottom:0.4em;flex-shrink:0}
-#debugVerboseLabel input,#debugRelayLabel input{width:auto;margin:0}
-#debugLog{flex:1;overflow:auto;white-space:pre-wrap;word-break:break-all;font-family:'SF Mono',Menlo,Consolas,monospace;
-  font-size:0.7em;line-height:1.45;color:#8f8;background:#111;border:1px solid #262626;border-radius:8px;padding:0.6em;margin:0}
-#debugLog .err{color:#ff8080}
-#debugLog .warn{color:#ffd27f}
+#app{max-width:420px;margin:0 auto;padding:calc(0.8em + env(safe-area-inset-top)) 1em calc(1em + env(safe-area-inset-bottom))}
+#status{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:0.7em 1em;margin-bottom:0.9em;font-size:0.95em;line-height:1.6}
+#status b{color:#fff;font-weight:600}
+#status .dim{color:#999}
+#status .grn{color:#4caf50}
+label{display:block;color:#ccc;font-size:0.9em;margin:0.9em 0 0.2em}
+input[type=range]{width:100%;height:2em}
+button{display:block;width:100%;margin:0.5em 0;padding:0.9em;min-height:48px;border-radius:10px;background:#262626;color:#fff;font-size:1em;border:none;font-family:inherit;cursor:pointer}
+button.active{background:#4caf50}
+button.warn{background:#5a2323}
+.row{display:flex;gap:0.5em}
+.row button{flex:1}
+h2{font-size:0.8em;text-transform:uppercase;letter-spacing:0.06em;color:#888;margin:1.3em 0 0.2em}
+#connectScreen{min-height:90vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1em;text-align:center;padding:1em}
+#connectScreen button{max-width:280px;background:#4caf50;font-size:1.1em}
+#connectError{color:#ff5252;font-size:0.9em;min-height:1.2em;max-width:320px}
+#connectScreen .hint{color:#777;font-size:0.85em;max-width:300px;line-height:1.5}
+#main{display:none}
 </style>
 </head>
 <body>
+<div id="app">
 
-<button id='debugToggleBtn' type='button'>Debug</button>
-<div id='debugPanel'>
-  <div id='debugToolbar'>
-    <button class='tbtn' id='debugCopyBtn' type='button'>Copy log</button>
-    <button class='tbtn' id='debugClearBtn' type='button'>Clear</button>
-    <button class='tbtn' id='debugCloseBtn' type='button'>Close</button>
+<div id="connectScreen">
+  <div style="font-size:2.5em">🫧</div>
+  <div style="font-size:1.3em;font-weight:600">Bubbler Totem</div>
+  <button onclick="connect()">Connect</button>
+  <div id="connectError"></div>
+  <div class="hint">Uses Web Bluetooth. On iPhone/iPad open this page in the Bluefy browser; on Android use Chrome.</div>
+</div>
+
+<div id="main">
+  <div id="status">
+    <div><span class="dim">Effect:</span> <b id="stFx">&ndash;</b></div>
+    <div><span class="dim">Playlist:</span> <b id="stPl">&ndash;</b></div>
+    <div><span class="dim">Bubbles:</span> <b id="stBub">&ndash;</b></div>
   </div>
-  <label id='debugVerboseLabel'><input type='checkbox' id='debugVerbose'> Verbose (per-chunk detail + hex dumps)</label>
-  <label id='debugRelayLabel'><input type='checkbox' id='debugRelay'> Relay log to device Serial monitor</label>
-  <pre id='debugLog'></pre>
-</div>
 
-<div id='connectScreen'>
-  <div class='stub'>
-    <h1 style='font-size:1.4em;color:#eee'>Bubbler Totem</h1>
-    <p>Control the totem directly over Bluetooth - no WiFi required.</p>
-    <button class='button' id='connectBtn'>Connect</button>
-    <p id='connectError'></p>
-    <p style='font-size:0.8em'>On iPhone, Safari can't do this - use
-      <a class='link' href='https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055' target='_blank' rel='noopener'>Bluefy</a>
-      or WebBLE instead. Desktop/Android Chrome and Edge work directly.</p>
-    <p style='font-size:0.8em'>Tap <b>Debug</b> (top right) to see a live log of every BLE command/response, including raw
-      bytes - tap <b>Copy log</b> there any time to grab it for troubleshooting.</p>
+  <label>Brightness <input type="range" id="bri" min="1" max="255" value="128"
+    oninput="briInput(this.value)" onpointerdown="briHold=true" onpointerup="briHold=false"></label>
+
+  <h2>Playlists</h2>
+  <div class="row">
+    <button id="pl1" onclick="send({on:true,ps:1})">Ambient</button>
+    <button id="pl2" onclick="send({on:true,ps:2})">Pulse</button>
+  </div>
+  <div class="row">
+    <button id="pl3" onclick="send({on:true,ps:3})">Flow</button>
+    <button id="pl4" onclick="send({on:true,ps:4})">Party</button>
+  </div>
+  <button id="offBtn" class="warn" onclick="send({on:false})">Effects Off</button>
+
+  <h2>Bubbles</h2>
+  <div class="row">
+    <button id="bubOn" onclick="send({MultiRelay:[{relay:0,cycle:false},{relay:0,on:true}]})">On</button>
+    <button id="bubOff" onclick="send({MultiRelay:[{relay:0,cycle:false},{relay:0,on:false}]})">Off</button>
+    <button id="bubTimer" onclick="send({MultiRelay:{relay:0,cycle:'t'}})">Timer</button>
   </div>
 </div>
 
-<div id='app' style='display:none'>
-  <div id='statusbar'><span id='sbDot'></span><span id='sbPulse'></span><span id='sbEffect'>--</span><span id='sbBpm'></span><span id='sbSync'></span></div>
-  <div id='content'></div>
-  <nav id='tabbar'>
-    <button data-tab='main'><span class='ic'>&#127899;</span>Main</button>
-    <button data-tab='effects'><span class='ic'>&#10024;</span>Effects</button>
-    <button data-tab='saved'><span class='ic'>&#11088;</span>Saved</button>
-    <button data-tab='palettes'><span class='ic'>&#127912;</span>Palettes</button>
-    <button data-tab='settings'><span class='ic'>&#9881;</span>Settings</button>
-  </nav>
 </div>
-
 <script>
-(function () {
-  'use strict';
+var SERVICE_UUID = '7a5a1000-0002-4b70-8f1a-9d6e9c9a2b10';
+var RX_UUID = '7a5a1001-0002-4b70-8f1a-9d6e9c9a2b10'; // write: JSON commands in
+var TX_UUID = '7a5a1002-0002-4b70-8f1a-9d6e9c9a2b10'; // notify: status JSON out
 
-  // Must match BleServer.cpp exactly.
-  var SERVICE_UUID = '7a5a1000-0002-4b70-8f1a-9d6e9c9a2b10';
-  var RX_UUID = '7a5a1001-0002-4b70-8f1a-9d6e9c9a2b10'; // write: commands in
-  var TX_UUID = '7a5a1002-0002-4b70-8f1a-9d6e9c9a2b10'; // notify: JSON responses out
+var PLAYLISTS = {1:'Ambient', 2:'Pulse', 3:'Flow', 4:'Party'};
 
-  // ---- on-screen debug log (Bluefy has no easy devtools access, so this
-  // needs to be visible without a separate computer). Both extra detail and
-  // the device-relay are opt-in (off by default) - each is itself extra BLE
-  // traffic, which is exactly what we're trying to keep off the wire once
-  // things are working normally. ----
-  var debugLines = [];
-  var MAX_DEBUG_LINES = 1000;
-  var verboseLogging = false;
-  var relayEnabled = false;
-  var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+var dev = null, rxChr = null, txChr = null;
+var briHold = false, briTimer = null, briQueued = null;
+var enc = new TextEncoder(), dec = new TextDecoder();
 
-  function logDebug(msg, level) {
-    var ts = (((window.performance && performance.now) ? performance.now() : Date.now()) - t0) / 1000;
-    var line = '[' + ts.toFixed(3) + '] ' + msg;
-    var cls = level === 'error' ? 'err' : level === 'warn' ? 'warn' : '';
-    debugLines.push({ text: line, level: level || 'info' });
+function gId(i){ return document.getElementById(i); }
 
-    if (level === 'error') console.error(line); else if (level === 'warn') console.warn(line); else console.log(line);
-
-    var el = document.getElementById('debugLog');
-    if (el) {
-      var span = document.createElement('span');
-      if (cls) span.className = cls;
-      span.textContent = line + '\n';
-      el.appendChild(span);
-      while (debugLines.length > MAX_DEBUG_LINES) {
-        debugLines.shift();
-        if (el.firstChild) el.removeChild(el.firstChild);
-      }
-      el.scrollTop = el.scrollHeight;
-    }
-    if (relayEnabled) relayLogToDevice(line);
+async function connect() {
+  gId('connectError').textContent = '';
+  if (!navigator.bluetooth) {
+    gId('connectError').textContent = 'Web Bluetooth is not available in this browser.';
+    return;
   }
-
-  // only logs (and, if enabled, relays) when verbose mode is on - for
-  // per-chunk/per-ack detail that's too noisy to want by default
-  function logVerbose(msg) {
-    if (verboseLogging) logDebug(msg);
+  try {
+    dev = await navigator.bluetooth.requestDevice({
+      filters: [{name: 'BubblerTotem'}],
+      optionalServices: [SERVICE_UUID]
+    });
+    dev.addEventListener('gattserverdisconnected', onDisconnect);
+    var gatt = await dev.gatt.connect();
+    var svc = await gatt.getPrimaryService(SERVICE_UUID);
+    rxChr = await svc.getCharacteristic(RX_UUID);
+    txChr = await svc.getCharacteristic(TX_UUID);
+    await txChr.startNotifications();
+    txChr.addEventListener('characteristicvaluechanged', function(e) {
+      handleStatus(dec.decode(e.target.value));
+    });
+    try { handleStatus(dec.decode(await txChr.readValue())); } catch(e) {}
+    gId('connectScreen').style.display = 'none';
+    gId('main').style.display = 'block';
+  } catch (e) {
+    if (e.name !== 'NotFoundError') // user cancelled the chooser
+      gId('connectError').textContent = e.message || String(e);
   }
-
-  // Best-effort mirror of the on-screen log to the device's own Serial
-  // monitor, so both sides of a failure show up in one place without
-  // copy-pasting off a phone. Deliberately bypasses the normal
-  // send()/_sendNow() queue (fire-and-forget, no response expected, and
-  // critically must NOT call logDebug itself or this recurses forever).
-  function relayLogToDevice(line) {
-    if (!link || !link.connected || !link.rxChar) return;
-    var msg = line.length > 140 ? line.slice(0, 140) + '...' : line;
-    var cmd = 'op=clientLog&msg=' + encodeURIComponent(msg);
-    var enc = new TextEncoder().encode(cmd);
-    link.rxChar.writeValue(enc).catch(function () { /* best-effort only */ });
-  }
-
-  function toHex(bytes) {
-    var parts = [];
-    for (var i = 0; i < bytes.length; i++) parts.push(bytes[i].toString(16).padStart(2, '0'));
-    return parts.join(' ');
-  }
-
-  function concatBytes(chunks) {
-    var total = 0;
-    for (var i = 0; i < chunks.length; i++) total += chunks[i].length;
-    var out = new Uint8Array(total);
-    var offset = 0;
-    for (var i = 0; i < chunks.length; i++) { out.set(chunks[i], offset); offset += chunks[i].length; }
-    return out;
-  }
-
-  // ---- BLE transport: one command in flight at a time (queued). Responses
-  // arrive as a sequence of chunks [more:1 byte][reqId:1 byte][seq:1 byte]
-  // [utf8 data...] (must match BleServer.cpp's sendNextChunk() exactly).
-  // GATT indications alone proved unreliable for back-to-back chunk
-  // delivery to this WebView (real testing showed only the *last* of ~99
-  // chunks ever arriving), so this now ack's each chunk explicitly: after
-  // processing one, it writes "op=ack&_id=<reqId>&seq=<seq>" back before
-  // the firmware sends the next. reqId lets a late straggler from an
-  // old/retried request be told apart from real corruption in the current
-  // one (former silently dropped, latter rejects with a clear error); a
-  // stall watchdog gives up and retries if no chunk arrives for a while
-  // (e.g. a lost ack write). ----
-  var BleLink = function () {
-    this.device = null;
-    this.rxChar = null;
-    this.txChar = null;
-    this.connected = false;
-    this.pending = null;
-    this.queue = Promise.resolve();
-    this.nextReqId = 0;
-  };
-
-  function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
-
-  BleLink.prototype.connect = function () {
-    var self = this;
-    logDebug('connect: requesting device (service ' + SERVICE_UUID + ')...');
-    return navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE_UUID] }] })
-      .then(function (device) {
-        logDebug('connect: device chosen: ' + device.name + ' (id ' + device.id + ')');
-        self.device = device;
-        device.addEventListener('gattserverdisconnected', function () {
-          logDebug('gattserverdisconnected event fired', 'warn');
-          self.connected = false;
-          onDisconnected();
-        });
-        return device.gatt.connect();
-      })
-      .then(function (server) { logDebug('connect: GATT connected, fetching service...'); return server.getPrimaryService(SERVICE_UUID); })
-      .then(function (service) {
-        logDebug('connect: service found, fetching characteristics...');
-        return Promise.all([
-          service.getCharacteristic(RX_UUID),
-          service.getCharacteristic(TX_UUID)
-        ]);
-      })
-      .then(function (chars) {
-        self.rxChar = chars[0];
-        self.txChar = chars[1];
-        logDebug('connect: characteristics found, starting notifications/indications...');
-        self.txChar.addEventListener('characteristicvaluechanged', function (e) { self._onNotify(e); });
-        return self.txChar.startNotifications();
-      })
-      .then(function () {
-        self.connected = true;
-        logDebug('connect: done, ready');
-      });
-  };
-
-  BleLink.prototype._onNotify = function (e) {
-    var value = e.target.value;
-    var bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-
-    if (bytes.length < 3) {
-      logDebug('BLE RX: malformed indication, only ' + bytes.length + ' byte(s) (need >=3 for header): ' + toHex(bytes), 'error');
-      return;
-    }
-    var more = bytes[0] === 1;
-    var respId = bytes[1];
-    var seq = bytes[2];
-    var dataLen = bytes.length - 3;
-
-    if (!this.pending) {
-      logDebug('BLE RX: chunk arrived with nothing pending (reqId=' + respId + ' seq=' + seq +
-        ' more=' + (more ? 1 : 0) + ' ' + dataLen + ' bytes) - ignored: ' + toHex(bytes), 'warn');
-      return;
-    }
-
-    logVerbose('BLE RX: reqId=' + respId + ' seq=' + seq + ' more=' + (more ? 1 : 0) + ' ' + dataLen +
-      ' bytes, expecting reqId=' + this.pending.reqId + ' seq=' + this.pending.expectedSeq +
-      ' | hex: ' + toHex(bytes));
-
-    if (respId !== this.pending.reqId) {
-      // Stale chunk from a previous/retried request, not corruption of the
-      // one we're currently waiting on - drop it and keep waiting.
-      logDebug('BLE RX: ignoring stale chunk (reqId mismatch)', 'warn');
-      return;
-    }
-
-    if (seq !== this.pending.expectedSeq) {
-      // Same request, but a chunk was skipped/duplicated/reordered -
-      // GATT-level acking only proves the phone's Bluetooth stack got the
-      // chunk, not that the phone's app (e.g. Bluefy's WebView bridge)
-      // relayed it intact. Reject instead of silently concatenating
-      // corrupted data into something JSON.parse chokes on.
-      var receivedHex = toHex(concatBytes(this.pending.chunks));
-      logDebug('BLE RX: CHUNK OUT OF SEQUENCE for op "' + this.pending.op + '" (reqId ' + respId +
-        '): expected seq ' + this.pending.expectedSeq + ', got ' + seq +
-        '. Bytes received so far (' + this.pending.chunks.reduce(function (n, c) { return n + c.length; }, 0) +
-        '): ' + receivedHex, 'error');
-      clearTimeout(this.pending.watchdog);
-      var reject = this.pending.reject;
-      this.pending = null;
-      reject(new Error('BLE response corrupted (chunk out of sequence)'));
-      return;
-    }
-
-    this.pending.chunks.push(bytes.slice(3)); // slice() copies - the underlying buffer may be reused after this handler returns
-    this.pending.expectedSeq = (seq + 1) & 0xff;
-
-    if (!more) {
-      clearTimeout(this.pending.watchdog);
-      var elapsedMs = Math.round((((window.performance && performance.now) ? performance.now() : Date.now()) - this.pending.startedAt));
-      logDebug('BLE: op "' + this.pending.op + '" (reqId ' + respId + ') complete - ' +
-        this.pending.chunks.length + ' chunks in ' + elapsedMs + 'ms');
-      var resolve = this.pending.resolve;
-      var allBytes = concatBytes(this.pending.chunks);
-      this.pending = null;
-      resolve(allBytes);
-    } else {
-      this._resetWatchdog();
-      // Plain GATT indications proved unreliable for back-to-back delivery
-      // to this WebView (see the big comment on BleServer.cpp's
-      // sendNextChunk()) - the firmware now waits for this explicit ack
-      // before sending the next chunk.
-      this._sendAck(respId, seq);
-    }
-  };
-
-  BleLink.prototype._sendAck = function (reqId, seq) {
-    var cmd = 'op=ack&_id=' + reqId + '&seq=' + seq;
-    logVerbose('BLE TX: ack reqId=' + reqId + ' seq=' + seq);
-    var enc = new TextEncoder().encode(cmd);
-    this.rxChar.writeValue(enc).catch(function (err) {
-      logDebug('BLE: failed to write ack for reqId=' + reqId + ' seq=' + seq + ': ' + err.message, 'error');
-    });
-  };
-
-  // if no chunk arrives for STALL_TIMEOUT_MS after the last one (or after
-  // sending the command, for the very first chunk), treat the response as
-  // stuck rather than hanging forever - the ack scheme means a single lost
-  // ack write can otherwise stall a response permanently
-  var STALL_TIMEOUT_MS = 4000;
-
-  BleLink.prototype._resetWatchdog = function () {
-    var self = this;
-    if (!this.pending) return;
-    clearTimeout(this.pending.watchdog);
-    this.pending.watchdog = setTimeout(function () {
-      if (!self.pending) return;
-      logDebug('BLE: response for op "' + self.pending.op + '" (reqId ' + self.pending.reqId +
-        ') stalled - no chunk for ' + STALL_TIMEOUT_MS + 'ms, giving up on it', 'error');
-      var reject = self.pending.reject;
-      self.pending = null;
-      reject(new Error('BLE response timed out (stalled)'));
-    }, STALL_TIMEOUT_MS);
-  };
-
-  BleLink.prototype.send = function (op, params) {
-    var self = this;
-    this.queue = this.queue.then(function () { return self._sendWithRetry(op, params); });
-    return this.queue;
-  };
-
-  // one automatic retry on a corrupted/failed/stalled response, with a
-  // short delay first so any late straggler chunks from the failed attempt
-  // land in a dead window (pending already cleared) instead of corrupting
-  // the retry
-  BleLink.prototype._sendWithRetry = function (op, params) {
-    var self = this;
-    return self._sendNow(op, params).catch(function (err) {
-      logDebug('BLE command "' + op + '" failed (' + err.message + '), retrying once...', 'warn');
-      return delay(300).then(function () { return self._sendNow(op, params); });
-    });
-  };
-
-  BleLink.prototype._sendNow = function (op, params) {
-    var self = this;
-    return new Promise(function (resolve, reject) {
-      if (!self.connected) { reject(new Error('Not connected')); return; }
-      var reqId = self.nextReqId;
-      self.nextReqId = (self.nextReqId + 1) & 0xff;
-      var startedAt = (window.performance && performance.now) ? performance.now() : Date.now();
-      self.pending = { resolve: resolve, reject: reject, chunks: [], expectedSeq: 0, op: op, reqId: reqId, watchdog: null, startedAt: startedAt };
-      self._resetWatchdog(); // covers the wait for the *first* chunk too, not just gaps between later ones
-      var cmd = 'op=' + encodeURIComponent(op) + '&_id=' + reqId;
-      for (var k in (params || {})) {
-        if (Object.prototype.hasOwnProperty.call(params, k)) {
-          cmd += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
-        }
-      }
-      logVerbose('BLE TX: reqId=' + reqId + ' op=' + op + ' cmd="' + cmd + '"');
-      var enc = new TextEncoder().encode(cmd);
-      self.rxChar.writeValue(enc).catch(function (err) {
-        logDebug('BLE TX: writeValue failed: ' + err.message, 'error');
-        if (self.pending) clearTimeout(self.pending.watchdog);
-        self.pending = null;
-        reject(err);
-      });
-    }).then(function (allBytes) {
-      var raw = new TextDecoder('utf-8').decode(allBytes);
-      try {
-        return JSON.parse(raw);
-      } catch (err) {
-        logDebug('BLE JSON parse FAILED for op "' + op + '": ' + err.message, 'error');
-        logDebug('  decoded string (' + raw.length + ' chars): ' + raw, 'error');
-        logDebug('  raw bytes (' + allBytes.length + '): ' + toHex(allBytes), 'error');
-        throw err;
-      }
-    });
-  };
-
-  var link = new BleLink();
-
-  // ---- app state (populated from BLE responses; render() reads from this) ----
-  var state = {
-    meta: null, status: null, effectParams: null,
-    palettes: [], categories: [], presets: [], micSettings: null, wifi: null,
-    editingPalette: null
-  };
-  var currentTab = null;
-
-  function qs(sel, root) { return (root || document).querySelector(sel); }
-  function qsa(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
-    });
-  }
-  function debounce(fn, ms) {
-    var t;
-    return function () { clearTimeout(t); var args = arguments; t = setTimeout(function () { fn.apply(null, args); }, ms); };
-  }
-  function showError(err) {
-    logDebug('ERROR: ' + ((err && err.stack) || (err && err.message) || String(err)), 'error');
-    var el = qs('#connectError');
-    if (el) el.textContent = (err && err.message) || String(err);
-  }
-
-  // ---- render functions (build markup from `state`; mirrors WebUI.cpp's fragments) ----
-
-  function renderMain() {
-    var beatSync = !!(state.status && state.status.beatSync);
-    var current = (state.status && state.status.syncBeats) || 0;
-    var html = "<h1>Main</h1>";
-    html += "<div class='row'><div>Beat Sync</div>";
-    html += "<button class='tbtn" + (beatSync ? " active" : "") + "' data-toggle-beatsync='" + (beatSync ? 0 : 1) + "'>" + (beatSync ? "On" : "Off") + "</button></div>";
-
-    var choices = [[0, 'Auto'], [0.5, '&frac12;'], [1, '1'], [2, '2'], [4, '4'], [8, '8']];
-    html += "<div>Beats per cycle</div><div class='tempoRow'>";
-    choices.forEach(function (c) {
-      var sel = Math.abs(current - c[0]) < 0.01;
-      html += "<button class='tbtn" + (sel ? " active" : "") + "' data-sync-beats='" + c[0] + "'>" + c[1] + "</button>";
-    });
-    html += "</div>";
-    html += "<div id='syncInfo' class='stub' style='padding:0.8em 0'></div>";
-
-    html += "<div class='stub'>When on, the running effect's loop is timed to span a whole number " +
-      "of beats and stay in phase with the music, once a steady tempo is detected. " +
-      "Category-based show mode is coming soon here.</div>";
-    return html;
-  }
-
-  function renderEffectParamsForm() {
-    if (!state.effectParams || state.status.effectId === 0) return '';
-    var info = state.meta.effects[state.status.effectId];
-    var p = state.effectParams;
-    var html = "<form data-live='setEffectParams'><h2>" + escapeHtml(info.name) + " settings</h2>";
-
-    html += "<label>Palette <select name='paletteId'>";
-    html += "<option value='none'" + (p.paletteId === -1 ? " selected" : "") + ">(Custom / unlinked)</option>";
-    state.palettes.forEach(function (pal) {
-      html += "<option value='" + pal.id + "'" + (pal.id === p.paletteId ? " selected" : "") + ">" + escapeHtml(pal.name) + "</option>";
-    });
-    html += "</select></label>";
-    html += "<div class='swatches'>" + p.paletteColors.map(function (c) { return "<span style='background:" + c + "'></span>"; }).join('') + "</div>";
-
-    html += "<label>Speed <input type='range' name='speed' min='1' max='100' value='" + p.speed + "'></label>";
-    html += "<label>Intensity <input type='range' name='intensity' min='1' max='100' value='" + p.intensity + "'></label>";
-
-    if (info.width) {
-      html += "<label>Width <select name='width'>";
-      for (var w = 1; w <= 3; w++) html += "<option value='" + w + "'" + (w === p.width ? " selected" : "") + ">" + w + "</option>";
-      html += "</select></label>";
-    }
-    if (info.twists) html += "<label>Twists <input type='range' name='twists' min='1' max='10' value='" + p.twists + "'></label>";
-    if (info.rows) html += "<label>Rows <input type='range' name='rows' min='1' max='6' value='" + p.rows + "'></label>";
-    if (info.overlap) html += "<label>Overlap <input type='range' name='overlap' min='1' max='100' value='" + p.overlap + "'></label>";
-    if (info.dualChase) html += "<label><input type='checkbox' name='dualChase' value='1'" + (p.dualChase ? " checked" : "") + "> Dual chase (start from both ends)</label>";
-
-    if (info.count) html += "<label>" + escapeHtml(info.count.label) + " <input type='range' name='elemcount' min='1' max='" + info.count.max + "' value='" + p.count + "'></label>";
-    if (info.style) html += "<label>" + escapeHtml(info.style.label) + " <input type='range' name='style' min='" + info.style.min + "' max='" + info.style.max + "' value='" + p.style + "'></label>";
-    if (info.density) html += "<label>" + escapeHtml(info.density.label) + " <input type='range' name='density' min='1' max='" + info.density.max + "' value='" + p.density + "'></label>";
-    if (info.thickness) html += "<label>" + escapeHtml(info.thickness) + " <input type='range' name='thickness' min='0' max='100' value='" + p.thickness + "'></label>";
-    if (info.twist) html += "<label>" + escapeHtml(info.twist) + " <input type='range' name='twist' min='-360' max='360' value='" + p.twistDeg + "'></label>";
-    if (info.flag) html += "<label><input type='checkbox' name='flag' value='1'" + (p.flag ? " checked" : "") + "> " + escapeHtml(info.flag) + "</label>";
-    if (info.flag2) html += "<label><input type='checkbox' name='flag2' value='1'" + (p.flag2 ? " checked" : "") + "> " + escapeHtml(info.flag2) + "</label>";
-
-    if (info.dir) {
-      html += "<label>Direction <select name='direction'>";
-      info.dir.forEach(function (d) {
-        html += "<option value='" + d[1] + "'" + (d[1] === p.direction ? " selected" : "") + ">" + escapeHtml(d[0]) + "</option>";
-      });
-      html += "</select></label>";
-    }
-    html += "</form>";
-    return html;
-  }
-
-  function renderSaveEffectForm() {
-    if (!state.status || state.status.effectId === 0) return '';
-    var current = state.status.presetId !== -1 ? state.presets.filter(function (x) { return x.id === state.status.presetId; })[0] : null;
-    var html = "<form data-save='saveEffect'><h2>Save this configuration</h2>";
-    if (current) html += "<input type='hidden' name='id' value='" + current.id + "'>";
-    html += "<label>Name <input type='text' name='name' maxlength='23' value='" + escapeHtml(current ? current.name : '') + "' required></label>";
-    html += "<label>Category <select name='categoryId'><option value=''>(none)</option>";
-    state.categories.forEach(function (c) {
-      html += "<option value='" + c.id + "'" + (current && current.categoryId === c.id ? " selected" : "") + ">" + escapeHtml(c.name) + "</option>";
-    });
-    html += "</select></label>";
-    html += "<label>Or new category <input type='text' name='newCategory' maxlength='23' placeholder='e.g. Party'></label>";
-    html += "<input type='submit' value='" + (current ? 'Update saved effect' : 'Save as new') + "'>";
-    html += "</form>";
-    return html;
-  }
-
-  function renderEffects() {
-    var html = "<h1>Effects</h1>";
-    if (state.meta) {
-      state.meta.effects.forEach(function (e) {
-        var active = state.status && e.id === state.status.effectId;
-        html += "<button class='button" + (active ? " active" : "") + "' data-activate-effect='" + e.id + "'>" + escapeHtml(e.name) + "</button>";
-      });
-    }
-    html += renderEffectParamsForm();
-    html += renderSaveEffectForm();
-    return html;
-  }
-
-  function renderSaved() {
-    var html = "<h1>Saved Effects</h1>";
-    if (state.presets.length === 0) html += "<div class='stub'>No saved effects yet. Configure one on the Effects tab and save it.</div>";
-    state.presets.forEach(function (pr) {
-      var active = state.status && pr.id === state.status.presetId;
-      html += "<div class='row" + (active ? " active" : "") + "'><div>";
-      html += "<strong>" + escapeHtml(pr.name) + "</strong><br>";
-      html += "<small>" + escapeHtml(pr.effectName) + (pr.categoryName ? " &middot; " + escapeHtml(pr.categoryName) : "") + "</small></div>";
-      html += "<button class='tbtn' data-activate-preset='" + pr.id + "' data-goto-tab='effects'>Activate</button>";
-      html += "<button class='tbtn' data-delete-preset='" + pr.id + "' data-confirm='Delete this saved effect?'>Delete</button>";
-      html += "</div>";
-    });
-    return html;
-  }
-
-  function renderPalettes() {
-    var html = "<h1>Palettes</h1>";
-    state.palettes.forEach(function (np) {
-      html += "<div class='row'><div><div class='swatches'>" + np.colors.map(function (c) { return "<span style='background:" + c + "'></span>"; }).join('') + "</div>" + escapeHtml(np.name) + "</div>";
-      html += "<button class='tbtn' data-edit-palette='" + np.id + "'>Edit</button>";
-      html += "<button class='tbtn' data-delete-palette='" + np.id + "' data-confirm='Delete this palette?'>Delete</button>";
-      html += "</div>";
-    });
-
-    var editing = state.editingPalette;
-    html += "<h2>" + (editing ? 'Edit palette' : 'New palette') + "</h2>";
-    html += "<form data-save='savePalette'>";
-    if (editing) html += "<input type='hidden' name='id' value='" + editing.id + "'>";
-    html += "<label>Name <input type='text' name='name' maxlength='23' value='" + escapeHtml(editing ? editing.name : '') + "' required></label>";
-    var count = editing ? editing.count : 3;
-    html += "<label>Colors <select name='count'>";
-    for (var c = 1; c <= 10; c++) html += "<option value='" + c + "'" + (c === count ? " selected" : "") + ">" + c + "</option>";
-    html += "</select></label><label>";
-    for (var i = 0; i < 10; i++) {
-      var col = (editing && i < editing.count) ? editing.colors[i] : '#000000';
-      html += "<input type='color' name='c" + i + "' value='" + col + "'>";
-    }
-    html += "</label><input type='submit' value='" + (editing ? 'Update' : 'Create') + "'></form>";
-    return html;
-  }
-
-  function renderSettings() {
-    var s = state.micSettings || { gain: 50, noiseFloor: 10, beatThreshold: 150, beatDebounce: 150 };
-    var html = "<h1>Settings</h1><h2>Mic Calibration</h2>";
-    html += "<div id='vu'><div id='vuBar'></div></div><div id='beatDot'></div>";
-    html += "<div class='band'><span id='bassBar'></span></div><small>Bass</small>";
-    html += "<div class='band'><span id='midBar'></span></div><small>Mid</small>";
-    html += "<div class='band'><span id='trebBar'></span></div><small>Treble</small>";
-    html += "<div id='bpmReadout'>-- BPM</div><div id='confReadout'>lock: --</div>";
-    html += "<div class='tempoRow'>";
-    html += "<button class='tbtn' data-mic-nudge='-1'>&divide;2</button>";
-    html += "<button class='tbtn' data-mic-tap='1'>TAP</button>";
-    html += "<button class='tbtn' data-mic-nudge='1'>&times;2</button>";
-    html += "</div>";
-    html += "<form data-live='setMicParams' data-save='saveMicSettings'>";
-    html += "<label>Sensitivity <input type='range' name='gain' min='1' max='100' value='" + s.gain + "'></label>";
-    html += "<label>Noise Floor <input type='range' name='noiseFloor' min='0' max='100' value='" + s.noiseFloor + "'></label>";
-    html += "<label>Beat Threshold % <input type='range' name='beatThreshold' min='110' max='400' value='" + s.beatThreshold + "'></label>";
-    html += "<label>Beat Debounce (ms) <input type='range' name='beatDebounce' min='30' max='500' value='" + s.beatDebounce + "'></label>";
-    html += "<input type='submit' value='Apply (save to flash)'></form>";
-
-    html += "<h2>Mic Recording</h2>";
-    html += "<div class='stub' style='padding:0.5em 0;text-align:left'>Records 10 seconds of raw mic " +
-      "audio to a .wav file on the totem, so you can listen back and judge how noisy the mic/preamp is. " +
-      "The recording itself works over Bluetooth, but downloading the finished file needs WiFi turned on below.</div>";
-    html += "<button class='tbtn' data-mic-record='1'>Record 10 seconds</button>";
-    html += "<div id='micRecordStatus'></div>";
-    var wifiForLink = state.wifi || { enabled: false, connected: false, ip: null };
-    if (state.status && state.status.micRecordReady) {
-      if (wifiForLink.connected && wifiForLink.ip) {
-        html += "<a class='link' href='http://" + wifiForLink.ip + "/mic_recording.wav' target='_blank' rel='noopener'>Download recording (.wav)</a>";
-      } else {
-        html += "<div class='stub' style='padding:0.5em 0;text-align:left'>Recording ready - turn WiFi on below, " +
-          "then reopen this Settings tab to get a download link.</div>";
-      }
-    }
-
-    var w = state.wifi || { enabled: false, connected: false, ip: null };
-    html += "<h2>WiFi</h2>";
-    html += "<div class='row'><div>WiFi is " + (w.enabled ? (w.connected ? "on &middot; connected" + (w.ip ? " (" + w.ip + ")" : "") : "on &middot; connecting&hellip;") : "off") + "</div>";
-    html += "<button class='tbtn' data-toggle-wifi='" + (w.enabled ? 0 : 1) + "'>" + (w.enabled ? 'Turn off' : 'Turn on') + "</button></div>";
-    html += "<div class='stub'>Turn WiFi on to reach the totem's own web page for a firmware update - that option only shows up there, not here over BLE.</div>";
-    return html;
-  }
-
-  function render(tab) {
-    var fn = { main: renderMain, effects: renderEffects, saved: renderSaved, palettes: renderPalettes, settings: renderSettings }[tab];
-    qs('#content').innerHTML = fn ? fn() : '';
-    wireContent();
-  }
-
-  // ---- generic event wiring for whatever the current render() produced ----
-
-  function formToParams(form) {
-    var params = {};
-    new FormData(form).forEach(function (v, k) { params[k] = v; });
-    return params;
-  }
-
-  function wireContent() {
-    var content = qs('#content');
-
-    qsa('form', content).forEach(function (form) {
-      var liveOp = form.getAttribute('data-live');
-      var saveOp = form.getAttribute('data-save');
-      if (liveOp) {
-        var send = debounce(function () { link.send(liveOp, formToParams(form)).catch(showError); }, 80);
-        form.addEventListener('input', send);
-        form.addEventListener('change', send);
-      }
-      form.addEventListener('submit', function (e) {
-        e.preventDefault();
-        var op = saveOp || liveOp;
-        if (!op) return;
-        link.send(op, formToParams(form)).then(function () {
-          if (op === 'saveEffect') {
-            return Promise.all([reloadCategories(), reloadPresets()]).then(function () {
-              return link.send('status', {});
-            }).then(function (st) { state.status = st; render('effects'); });
-          } else if (op === 'savePalette') {
-            return reloadPalettes().then(function () { state.editingPalette = null; render('palettes'); });
-          } else if (op === 'saveMicSettings') {
-            render('settings');
-          }
-        }).then(refreshStatus).catch(showError);
-      });
-    });
-
-    qsa('[data-activate-effect]', content).forEach(function (el) {
-      el.addEventListener('click', function () {
-        link.send('activateEffect', { effect: el.dataset.activateEffect }).then(function (params) {
-          state.effectParams = params;
-          state.status = state.status || {};
-          state.status.effectId = params.effectId;
-          state.status.presetId = -1;
-          render('effects');
-          refreshStatus();
-        }).catch(showError);
-      });
-    });
-
-    qsa('[data-activate-preset]', content).forEach(function (el) {
-      el.addEventListener('click', function () {
-        var gotoTab = el.dataset.gotoTab || currentTab;
-        link.send('activatePreset', { id: el.dataset.activatePreset }).then(function (params) {
-          state.effectParams = params;
-          return link.send('status', {});
-        }).then(function (st) {
-          state.status = st;
-          currentTab = gotoTab;
-          qsa('#tabbar button').forEach(function (b) { b.classList.toggle('active', b.dataset.tab === gotoTab); });
-          render(gotoTab);
-          refreshStatus();
-        }).catch(showError);
-      });
-    });
-
-    qsa('[data-delete-preset]', content).forEach(function (el) {
-      el.addEventListener('click', function () {
-        if (el.dataset.confirm && !confirm(el.dataset.confirm)) return;
-        link.send('deletePreset', { id: el.dataset.deletePreset }).then(reloadPresets).then(function () { render('saved'); }).catch(showError);
-      });
-    });
-
-    qsa('[data-delete-palette]', content).forEach(function (el) {
-      el.addEventListener('click', function () {
-        if (el.dataset.confirm && !confirm(el.dataset.confirm)) return;
-        link.send('deletePalette', { id: el.dataset.deletePalette }).then(reloadPalettes).then(function () { render('palettes'); }).catch(showError);
-      });
-    });
-
-    qsa('[data-edit-palette]', content).forEach(function (el) {
-      el.addEventListener('click', function () {
-        var id = Number(el.dataset.editPalette);
-        state.editingPalette = state.palettes.filter(function (p) { return p.id === id; })[0] || null;
-        render('palettes');
-      });
-    });
-
-    qsa('[data-toggle-wifi]', content).forEach(function (el) {
-      el.addEventListener('click', function () {
-        link.send('setWifi', { enabled: el.dataset.toggleWifi }).then(function (w) { state.wifi = w; render('settings'); }).catch(showError);
-      });
-    });
-
-    qsa('[data-toggle-beatsync]', content).forEach(function (el) {
-      el.addEventListener('click', function () {
-        link.send('setBeatSync', { enabled: el.dataset.toggleBeatsync }).then(function (st) { state.status = st; render('main'); }).catch(showError);
-      });
-    });
-
-    qsa('[data-sync-beats]', content).forEach(function (el) {
-      el.addEventListener('click', function () {
-        link.send('setSyncBeats', { beats: el.dataset.syncBeats }).then(function (st) { state.status = st; render('main'); }).catch(showError);
-      });
-    });
-
-    qsa('[data-mic-tap]', content).forEach(function (el) {
-      el.addEventListener('click', function () { link.send('micTap', {}).catch(showError); });
-    });
-    qsa('[data-mic-nudge]', content).forEach(function (el) {
-      el.addEventListener('click', function () { link.send('micNudge', { dir: el.dataset.micNudge }).catch(showError); });
-    });
-    qsa('[data-mic-record]', content).forEach(function (el) {
-      el.addEventListener('click', function () {
-        link.send('micRecordStart', {}).then(function (st) { state.status = st; render('settings'); }).catch(showError);
-      });
-    });
-  }
-
-  // ---- tab switching + cached-list refreshers ----
-
-  function reloadPresets() { return link.send('listPresets', {}).then(function (r) { state.presets = r.presets; }); }
-  function reloadPalettes() { return link.send('listPalettes', {}).then(function (r) { state.palettes = r.palettes; }); }
-  function reloadCategories() { return link.send('listCategories', {}).then(function (r) { state.categories = r.categories; }); }
-
-  function loadTab(name) {
-    currentTab = name;
-    qsa('#tabbar button').forEach(function (b) { b.classList.toggle('active', b.dataset.tab === name); });
-
-    var ready;
-    if (name === 'effects') {
-      ready = link.send('effectParams', {}).then(function (p) { state.effectParams = p; });
-    } else if (name === 'settings') {
-      ready = Promise.all([
-        link.send('micSettings', {}).then(function (s) { state.micSettings = s; }),
-        link.send('getWifi', {}).then(function (w) { state.wifi = w; })
-      ]);
-    } else {
-      ready = Promise.resolve();
-    }
-    ready.then(function () { render(name); }).catch(showError);
-  }
-
-  qsa('#tabbar button').forEach(function (b) {
-    b.addEventListener('click', function () { loadTab(b.dataset.tab); });
-  });
-
-  // ---- status polling (compact status bar always; fast meters on Settings) ----
-
-  var lastMicRecordReady = false;
-
-  function refreshStatus() {
-    return link.send('status', {}).then(function (d) {
-      var wasReady = lastMicRecordReady;
-      lastMicRecordReady = !!d.micRecordReady;
-      state.status = d;
-      qs('#sbEffect').textContent = d.presetName || d.effectName || '--';
-      qs('#sbBpm').textContent = d.bpm > 0 ? (Math.round(d.bpm) + ' BPM ' + Math.round(d.conf * 100) + '%') : '';
-      qs('#sbDot').classList.toggle('on', d.beat);
-
-      // sync badge: hidden when beat sync is off, "..." while listening,
-      // beats-per-cycle when locked
-      var sy = qs('#sbSync');
-      if (!d.beatSync) { sy.textContent = ''; }
-      else if (!d.syncLocked) { sy.textContent = '♪...'; sy.className = 'wait'; }
-      else { sy.textContent = '♪' + (d.syncActiveBeats > 0 ? '×' + d.syncActiveBeats : ''); sy.className = ''; }
-
-      // tempo pulse: beats at the detected BPM between polls, re-phased to
-      // the device's beat clock on every poll (restart the animation with a
-      // negative delay so its cycle start lines up with the device's phase)
-      var pu = qs('#sbPulse');
-      if (d.bpm > 0) {
-        var per = 60 / d.bpm;
-        pu.style.display = 'inline-block';
-        pu.classList.toggle('locked', !!d.syncLocked);
-        pu.style.animation = 'none';
-        void pu.offsetWidth; /* reflow so the next line restarts the animation */
-        pu.style.animation = 'sbpulse ' + per.toFixed(3) + 's linear infinite';
-        pu.style.animationDelay = (-(d.beatPhase || 0) * per).toFixed(3) + 's';
-      } else {
-        pu.style.display = 'none';
-      }
-
-      var vu = document.getElementById('vuBar'); if (vu) vu.style.width = (d.level * 100) + '%';
-      var bd = document.getElementById('beatDot'); if (bd) bd.className = d.beat ? 'on' : '';
-      var bb = document.getElementById('bassBar'); if (bb) bb.style.width = (d.bass * 100) + '%';
-      var mb = document.getElementById('midBar'); if (mb) mb.style.width = (d.mid * 100) + '%';
-      var tb = document.getElementById('trebBar'); if (tb) tb.style.width = (d.treble * 100) + '%';
-      var bpmEl = document.getElementById('bpmReadout'); if (bpmEl) bpmEl.textContent = (d.bpm > 0 ? Math.round(d.bpm) : '--') + ' BPM';
-      var confEl = document.getElementById('confReadout'); if (confEl) confEl.textContent = 'lock: ' + Math.round(d.conf * 100) + '%';
-
-      var syncInfo = document.getElementById('syncInfo');
-      if (syncInfo) {
-        if (!d.beatSync) syncInfo.textContent = 'Beat sync is off.';
-        else if (!d.syncLocked) syncInfo.textContent = 'Listening for a steady tempo... (lock ' + Math.round(d.conf * 100) + '%)';
-        else if (d.syncActiveBeats > 0) syncInfo.textContent = 'Locked: 1 cycle = ' + d.syncActiveBeats + ' beat' + (d.syncActiveBeats === 1 ? '' : 's') + ' @ ' + Math.round(d.bpm) + ' BPM (lock ' + Math.round(d.conf * 100) + '%)';
-        else syncInfo.textContent = 'Tempo locked @ ' + Math.round(d.bpm) + ' BPM - this effect has no fixed loop, so it free-runs.';
-      }
-
-      var micStatus = document.getElementById('micRecordStatus');
-      if (micStatus) {
-        if (d.micRecording) micStatus.textContent = 'Recording... ' + Math.round(d.micRecordProgress * 100) + '%';
-        else if (d.micRecordReady) micStatus.textContent = 'Recording ready.';
-        else micStatus.textContent = '';
-      }
-      // the download link depends on state.wifi too, so just re-render the
-      // whole Settings tab the moment the recording flips to ready
-      if (currentTab === 'settings' && lastMicRecordReady && !wasReady) render('settings');
-    }).catch(function () {});
-  }
-
-  var pollTimer = null;
-  function scheduleStatusPoll() {
-    refreshStatus().then(function () {
-      if (!link.connected) return;
-      pollTimer = setTimeout(scheduleStatusPoll, currentTab === 'settings' ? 250 : 1000);
-    });
-  }
-
-  // ---- connect / disconnect flow ----
-
-  function onDisconnected() {
-    if (pollTimer) clearTimeout(pollTimer);
-    qs('#app').style.display = 'none';
-    qs('#connectScreen').style.display = 'flex';
-    qs('#connectError').textContent = 'Disconnected. Tap Connect to reconnect.';
-  }
-
-  qs('#connectBtn').addEventListener('click', function () {
-    qs('#connectError').textContent = '';
-    logDebug('=== Connect button tapped ===');
-    if (!navigator.bluetooth) {
-      logDebug('navigator.bluetooth is undefined - this browser has no Web Bluetooth support', 'error');
-      qs('#connectError').textContent = "This browser doesn't support Web Bluetooth.";
-      return;
-    }
-    link.connect().then(function () {
-      return link.send('meta', {});
-    }).then(function (meta) {
-      state.meta = meta;
-      return Promise.all([reloadPalettes(), reloadCategories(), reloadPresets()]);
-    }).then(function () {
-      return link.send('status', {});
-    }).then(function (st) {
-      state.status = st;
-      return link.send('effectParams', {});
-    }).then(function (params) {
-      state.effectParams = params;
-      qs('#connectScreen').style.display = 'none';
-      qs('#app').style.display = 'block';
-      logDebug('=== Connected and loaded initial state ===');
-      loadTab('effects');
-      scheduleStatusPoll();
-    }).catch(showError);
-  });
-
-  // ---- debug panel wiring ----
-
-  qs('#debugToggleBtn').addEventListener('click', function () {
-    qs('#debugPanel').classList.toggle('open');
-  });
-  qs('#debugCloseBtn').addEventListener('click', function () {
-    qs('#debugPanel').classList.remove('open');
-  });
-  qs('#debugClearBtn').addEventListener('click', function () {
-    debugLines = [];
-    qs('#debugLog').textContent = '';
-  });
-  qs('#debugCopyBtn').addEventListener('click', function () {
-    var text = debugLines.map(function (l) { return l.text; }).join('\n');
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text)
-        .then(function () { logDebug('(log copied to clipboard)'); })
-        .catch(function (err) { logDebug('clipboard copy failed: ' + err.message + ' - select the text manually instead', 'warn'); });
-    } else {
-      var el = qs('#debugLog');
-      var range = document.createRange();
-      range.selectNodeContents(el);
-      var sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
-      logDebug('clipboard API unavailable - log text selected, use your browser\'s copy action', 'warn');
-    }
-  });
-  qs('#debugVerbose').addEventListener('change', function (e) {
-    verboseLogging = e.target.checked;
-    logDebug('Verbose logging ' + (verboseLogging ? 'enabled' : 'disabled'));
-  });
-  qs('#debugRelay').addEventListener('change', function (e) {
-    relayEnabled = e.target.checked;
-    logDebug('Relay to device Serial ' + (relayEnabled ? 'enabled' : 'disabled'));
-  });
-
-  logDebug('Page loaded. navigator.bluetooth available: ' + (!!navigator.bluetooth));
-})();
+}
+
+function onDisconnect() {
+  rxChr = txChr = null;
+  gId('main').style.display = 'none';
+  gId('connectScreen').style.display = 'flex';
+  gId('connectError').textContent = 'Disconnected.';
+}
+
+async function write(obj) {
+  if (!rxChr) return;
+  var data = enc.encode(JSON.stringify(obj));
+  try {
+    if (rxChr.writeValueWithoutResponse) await rxChr.writeValueWithoutResponse(data);
+    else await rxChr.writeValue(data);
+  } catch (e) { /* writes can collide while one is in flight - drop */ }
+}
+
+function send(obj) { write(obj); }
+
+function briInput(v) {
+  briQueued = parseInt(v, 10);
+  if (briTimer) return;
+  briTimer = setTimeout(function() {
+    briTimer = null;
+    if (briQueued !== null) { write({bri: briQueued}); briQueued = null; }
+  }, 150);
+}
+
+function handleStatus(txt) {
+  var s;
+  try { s = JSON.parse(txt); } catch(e) { return; }
+  gId('stFx').textContent = s.on ? (s.fx || '–') : 'off';
+  gId('stPl').textContent = PLAYLISTS[s.pl] || (s.pl > 0 ? ('#' + s.pl) : 'none');
+  gId('stBub').textContent = s.cyc ? ('timer' + (s.mot ? ' · bubbling' : '')) : (s.mot ? 'on' : 'off');
+  gId('stBub').className = (s.mot || s.cyc) ? 'grn' : '';
+  if (!briHold && !briTimer && s.bri) gId('bri').value = s.bri;
+  for (var i = 1; i <= 4; i++)
+    gId('pl' + i).classList.toggle('active', s.on == 1 && s.pl == i);
+  gId('offBtn').classList.toggle('active', s.on == 0);
+  gId('bubOn').classList.toggle('active', !!s.mot && !s.cyc);
+  gId('bubOff').classList.toggle('active', !s.mot && !s.cyc);
+  gId('bubTimer').classList.toggle('active', !!s.cyc);
+}
 </script>
 </body>
 </html>
