@@ -59,6 +59,10 @@ h2{font-size:0.8em;text-transform:uppercase;letter-spacing:0.06em;color:#888;mar
     <button id="pl3" onclick="send({on:true,ps:3})">Flow</button>
     <button id="pl4" onclick="send({on:true,ps:4})">Party</button>
   </div>
+  <div class="row">
+    <button id="pl5" onclick="send({on:true,ps:5})">Wash</button>
+    <button id="stopBtn" onclick="send({playlist:{ps:[]}})">Stop Playlist</button>
+  </div>
   <button id="offBtn" class="warn" onclick="send({on:false})">Effects Off</button>
 
   <h2>Bubbles</h2>
@@ -75,7 +79,7 @@ var SERVICE_UUID = '7a5a1000-0002-4b70-8f1a-9d6e9c9a2b10';
 var RX_UUID = '7a5a1001-0002-4b70-8f1a-9d6e9c9a2b10'; // write: JSON commands in
 var TX_UUID = '7a5a1002-0002-4b70-8f1a-9d6e9c9a2b10'; // notify: status JSON out
 
-var PLAYLISTS = {1:'Ambient', 2:'Pulse', 3:'Flow', 4:'Party'};
+var PLAYLISTS = {1:'Ambient', 2:'Pulse', 3:'Flow', 4:'Party', 5:'Wash'};
 
 var dev = null, rxChr = null, txChr = null;
 var briHold = false, briTimer = null, briQueued = null;
@@ -147,7 +151,7 @@ function handleStatus(txt) {
   gId('stBub').textContent = s.cyc ? ('timer' + (s.mot ? ' · bubbling' : '')) : (s.mot ? 'on' : 'off');
   gId('stBub').className = (s.mot || s.cyc) ? 'grn' : '';
   if (!briHold && !briTimer && s.bri) gId('bri').value = s.bri;
-  for (var i = 1; i <= 4; i++)
+  for (var i = 1; i <= 5; i++)
     gId('pl' + i).classList.toggle('active', s.on == 1 && s.pl == i);
   gId('offBtn').classList.toggle('active', s.on == 0);
   gId('bubOn').classList.toggle('active', !!s.mot && !s.cyc);
